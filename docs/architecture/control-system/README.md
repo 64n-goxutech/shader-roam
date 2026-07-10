@@ -15,6 +15,8 @@ graph TB
     ControlSystem --> FlightCommand[FlightCommand]
 
     FlightCommand --> VehicleController[ArcadeFlyingCar]
+    VehicleController --> MotionRoot[⚡ Motion Root<br/>Heading + Bounded Pitch]
+    VehicleController --> VisualRoot[🆕 Visual Root<br/>Auto Bank + Manual Roll + Pitch Feedback]
     VehicleController --> VehicleState[VehicleState]
     VehicleState --> CameraRig[Camera Rig]
     VehicleState --> Environment[Environment Shader Uniforms]
@@ -28,7 +30,7 @@ graph TB
 | `KeyboardPointerInput` | 监听键盘和鼠标拖拽，维护原始输入 | DOM / Window events | `RawInputState` |
 | `ControlSystem` | 把原始输入转换为稳定飞行命令 | `RawInputState`、`ControlSettings`、`dt` | `FlightCommand` |
 | `ControlSettings` | 描述灵敏度、反转、平滑、死区 | 用户配置 / 默认配置 | 控制参数 |
-| `ArcadeFlyingCar` | 消费飞行命令并更新飞车状态 | `FlightCommand`、`dt` | `VehicleState` |
+| `ArcadeFlyingCar` | 消费飞行意图，分离真实航向与视觉姿态并更新飞车状态 | `FlightCommand`、`dt`、运动/视觉根节点 | `VehicleState` 与姿态诊断 |
 | `HUD` | 展示速度、高度和控制反馈 | `VehicleState` | 文本状态 |
 
 ## 3. 核心原理
@@ -38,6 +40,11 @@ graph TB
 - 🆕 `FlightCommand` 表示载具真正消费的控制语义：油门、刹车、俯仰、偏航、滚转、加速。
 - ⚡ `ControlSystem` 仍支持鼠标衰减脉冲，但当前 `Experience` 禁用 pointer flight，鼠标事件只交给 `OrbitControls`。
 - 🆕 飞控手感先保持 arcade：命令值在 `[-1, 1]` 内，动力学由载具模块解释，不在输入层模拟真实物理。
+- ⚡ 键盘方向按屏幕直觉映射：`A/D` 或左右方向键负责左右转向，上下方向键负责爬升/俯冲，`Q/E` 负责左右手动侧倾。
+- 🆕 运动根节点只包含世界上方向的航向与有上限的俯仰；视觉滚转不直接改变前进方向，避免侧倾键造成意外转向。
+- 🆕 转向命令自动生成协调侧倾；手动侧倾与自动侧倾叠加后受限，松键后指数回正。
+- 🆕 俯仰输入改变爬升角，松键后自动回到水平；前进方向以短时间常数跟随车头，保留轻微惯性但不产生长时间侧滑。
+- 🆕 加速和刹车只向视觉根节点加入轻微抬头/点头反馈，不污染真实运动四元数。
 
 ## 4. 核心数据结构
 
@@ -66,6 +73,16 @@ interface FlightCommand {
   roll: number
   boost: boolean
 }
+
+interface ArcadeAttitudeState {
+  heading: number
+  pitch: number
+  visualRoll: number
+  visualPitch: number
+  longitudinalAcceleration: number
+  desiredForward: Vector3
+  travelDirection: Vector3
+}
 ```
 
 ## 5. 业务流程
@@ -85,7 +102,9 @@ sequenceDiagram
     Control->>Input: 每帧读取 snapshot
     Control->>Control: 映射、灵敏度、反转、死区、平滑
     Control->>Car: 输出 FlightCommand
-    Car->>Car: 更新姿态、速度、位置
+    Car->>Car: 更新航向、受限俯仰与速度
+    Car->>Car: 计算旅行方向并更新位置
+    Car->>Car: 更新自动侧倾、手动侧倾和加减速点头
     Car->>Camera: 输出 VehicleState
     Car->>Env: 输出 VehicleState
     Car->>HUD: 输出 telemetry
@@ -96,15 +115,18 @@ sequenceDiagram
 ```text
 function 每帧控制更新(dt):
     1. 从输入源读取 RawInputState
-    2. 将键盘按键映射为 throttle / brake / roll / yaw / pitch
-    3. 仅在 pointer flight 启用时将鼠标增量映射为 yaw / pitch 脉冲；当前场景保持禁用
-    4. 应用灵敏度、反转和死区
-    5. 对轴向命令做平滑
-    6. 输出 FlightCommand 给载具控制器
+    2. 将 W/S 映射为油门/刹车，A/D 或左右方向键映射为转向
+    3. 将 Q/E 映射为视觉侧倾，上下方向键映射为爬升/俯冲
+    4. 仅在 pointer flight 启用时将鼠标增量映射为 yaw / pitch 脉冲；当前场景保持禁用
+    5. 应用灵敏度、反转和死区
+    6. 对轴向命令做平滑
+    7. 输出 FlightCommand 给载具控制器
 
 function 载具消费命令(dt):
     1. 根据 throttle / brake / boost 更新速度
-    2. 根据 pitch / yaw / roll 更新本地旋转
-    3. 沿车头的本地 -Z 方向推进位置
-    4. 写入 VehicleState 供相机、环境和 HUD 使用
+    2. 用 yaw 更新世界上方向的航向，用 pitch 更新有上限的爬升角
+    3. 无俯仰输入时逐步回到水平
+    4. 让旅行方向快速跟随车头方向，并沿该方向推进位置
+    5. 将 yaw 自动侧倾、manual roll 和纵向加速度反馈写入视觉根节点
+    6. 写入 VehicleState 供相机、环境和 HUD 使用
 ```

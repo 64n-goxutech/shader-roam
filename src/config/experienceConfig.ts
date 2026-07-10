@@ -5,6 +5,6 @@ export const defaultExperienceConfig: ExperienceConfig = {
   environmentLabel: 'SUNSET',
   vehicleId: 'toyota-ae86-trueno',
   vehicleModelUrl: '/models/vehicles/toyota-ae86/toyota-ae86-trueno.glb',
-  vehicleModelYawDegrees: 135,
+  vehicleModelYawDegrees: 180,
   quality: 'low'
 };

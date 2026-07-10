@@ -26,14 +26,15 @@ export class ControlSystem {
 
     target.throttle = raw.keys.has('KeyW') ? 1 : 0;
     target.brake = raw.keys.has('KeyS') ? 1 : 0;
-    target.roll =
-      (Number(raw.keys.has('KeyA')) - Number(raw.keys.has('KeyD'))) *
-      this.settings.keyboardSensitivity;
     target.yaw =
+      (Number(raw.keys.has('KeyA') || raw.keys.has('ArrowLeft')) -
+        Number(raw.keys.has('KeyD') || raw.keys.has('ArrowRight'))) *
+      this.settings.keyboardSensitivity;
+    target.roll =
       (Number(raw.keys.has('KeyQ')) - Number(raw.keys.has('KeyE'))) *
       this.settings.keyboardSensitivity;
     target.pitch =
-      (Number(raw.keys.has('ArrowDown')) - Number(raw.keys.has('ArrowUp'))) *
+      (Number(raw.keys.has('ArrowUp')) - Number(raw.keys.has('ArrowDown'))) *
       this.settings.keyboardSensitivity;
     target.boost = raw.keys.has('ShiftLeft') || raw.keys.has('ShiftRight');
 

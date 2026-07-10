@@ -16,6 +16,7 @@ import { OrbitCameraRig } from '../camera/OrbitCameraRig';
 import { ControlSystem } from '../controls/ControlSystem';
 import { KeyboardPointerInput } from '../controls/KeyboardPointerInput';
 import { SunsetEnvironment } from '../environments/SunsetEnvironment';
+import { MotionReferenceField } from '../environments/MotionReferenceField';
 import type { AtmosphereDebugMode } from '../shaders/sunsetSky';
 import {
   getRendererDiagnostics,
@@ -48,6 +49,7 @@ export class Experience {
   private readonly vehicleVisualRoot: Group;
   private readonly orbitCameraRig: OrbitCameraRig;
   private readonly environment: SunsetEnvironment;
+  private readonly motionReferences: MotionReferenceField;
   private readonly removeRendererDiagnostics: () => void;
 
   private animationFrame = 0;
@@ -77,13 +79,17 @@ export class Experience {
 
     const vehicleObject = new Group();
     vehicleObject.name = this.config.vehicleId;
+    const vehicleVisualRoot = new Group();
+    vehicleVisualRoot.name = `${this.config.vehicleId}-visual-root`;
     const placeholder = createPlaceholderFlyingCar();
     placeholder.rotation.y = MathUtils.degToRad(this.config.vehicleModelYawDegrees);
-    vehicleObject.add(placeholder);
+    vehicleVisualRoot.add(placeholder);
+    vehicleObject.add(vehicleVisualRoot);
     this.scene.add(vehicleObject);
-    this.vehicleVisualRoot = vehicleObject;
+    this.vehicleVisualRoot = vehicleVisualRoot;
     this.vehicle = new ArcadeFlyingCar({
       object: vehicleObject,
+      visual: vehicleVisualRoot,
       command: this.controls.command
     });
     void this.loadVehicleVisual(placeholder);
@@ -93,6 +99,9 @@ export class Experience {
       domElement: this.canvas
     });
     this.environment = new SunsetEnvironment(this.scene, {
+      quality: this.config.quality
+    });
+    this.motionReferences = new MotionReferenceField(this.scene, {
       quality: this.config.quality
     });
     this.input.setPointerFlightEnabled(false);
@@ -133,6 +142,7 @@ export class Experience {
     window.cancelAnimationFrame(this.animationFrame);
     this.input.dispose();
     this.orbitCameraRig.dispose();
+    this.motionReferences.dispose();
     this.timer.dispose();
     this.removeRendererDiagnostics();
     window.removeEventListener('resize', this.resize);
@@ -170,7 +180,8 @@ export class Experience {
     const rawInput = this.input.snapshot();
     this.controls.update(rawInput, dt);
     this.vehicle.update(dt);
-    this.orbitCameraRig.update(this.vehicle.state);
+    this.orbitCameraRig.update(dt, this.vehicle.state);
+    this.motionReferences.update(dt, elapsed, this.camera, this.vehicle.state);
     this.environment.update(elapsed, this.camera.position, this.vehicle.state);
     this.updateHud();
 
@@ -223,7 +234,8 @@ export class Experience {
         forward: cameraForward.toArray(),
         aspect: this.camera.aspect,
         near: this.camera.near,
-        far: this.camera.far
+        far: this.camera.far,
+        motionFeedback: this.orbitCameraRig.getDiagnostics()
       },
       vehicle: {
         id: this.config.vehicleId,
@@ -231,10 +243,12 @@ export class Experience {
         modelState: this.vehicleModelState,
         visualChildren: this.vehicleVisualRoot.children.map((child) => child.name || child.type),
         position: this.vehicle.state.position.toArray(),
-        speed: this.vehicle.state.speed
+        speed: this.vehicle.state.speed,
+        attitude: this.vehicle.getDiagnostics()
       },
       renderer: getRendererDiagnostics(this.renderer),
       sunset: this.environment.getDiagnostics(this.camera, this.renderer),
+      motionReferences: this.motionReferences.getDiagnostics(),
       framebuffer
     };
   }

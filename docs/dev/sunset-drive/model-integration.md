@@ -21,7 +21,7 @@ flowchart LR
     Loader --> Bounds[Box3 Bounds]
     Bounds --> Scale[Target Length 5.2]
     Scale --> Center[Move Bounds Center to Origin]
-    Center --> Yaw[Visual Yaw +135 Degrees]
+    Center --> Yaw[Visual Yaw +180 Degrees]
     Yaw --> Metadata[Record Source Size / Scale / Yaw / -Z]
     Metadata --> Visual[Stable Vehicle Visual Root]
     Fallback[Placeholder Flying Car] -->|Replace on success| Visual
@@ -34,7 +34,7 @@ flowchart LR
 - 🆕 目标长轴为 `5.2`，运行时 scale 约为 `0.53854`。
 - 🆕 规范化尺寸约为 `2.282 x 1.557 x 5.2`，中心为 `(0, 0, 0)`，适配当前 orbit 距离。
 - 🆕 模型长轴已沿 Z，运动控制器以本地 `-Z` 为前向；不额外修改 GLB 二进制。
-- ⚡ 视觉根节点绕本地 Y 轴正向旋转 `135°`；运动根节点保持零初始旋转，因此只改变模型朝向，不改变初始飞行轨迹。
+- ⚡ 视觉根节点绕本地 Y 轴正向旋转 `180°`；运动根节点保持零初始旋转，因此只改变模型朝向，不改变初始飞行轨迹。
 - 🆕 加载成功后释放占位车 geometry/material；加载失败时保留占位车并输出结构化错误。
 
 ## 验证
@@ -42,6 +42,6 @@ flowchart LR
 - ⚡ 文件与 attribution 均位于车型目录。
 - ⚡ Vite 静态资源响应为 `200 model/gltf-binary`。
 - ⚡ 项目 `GLTFLoader` 实际解析出 28 个 mesh、0 个动画；规范化函数返回预期尺寸和中心。
-- ⚡ `yawDegrees: 135` 输出 `2.35619449` 弧度；旋转后 AABB 约为 `5.291 x 1.557 x 5.291`，中心误差保持在浮点精度范围内。
+- ⚡ `yawDegrees: 180` 输出 `3.14159265` 弧度；旋转后 AABB 约为 `2.282 x 1.557 x 5.2`，中心误差保持在浮点精度范围内。
 - ⚡ TypeScript/Vite 构建通过。
 - ⚡ 浏览器会话不可用，材质呈现、车头方向与最终构图仍需在正常 WebGL 浏览器中确认。
