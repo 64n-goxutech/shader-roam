@@ -3,13 +3,17 @@ import {
   BoxGeometry,
   BufferAttribute,
   BufferGeometry,
+  CircleGeometry,
   Color,
+  CylinderGeometry,
   DoubleSide,
   DynamicDrawUsage,
   Group,
+  InstancedBufferAttribute,
   InstancedMesh,
   Material,
   Matrix4,
+  Mesh,
   MeshBasicMaterial,
   NormalBlending,
   Object3D,
@@ -22,14 +26,58 @@ import {
   Vector3
 } from 'three';
 import type { QualityLevel, VehicleState } from '../engine/types';
+import {
+  createProceduralCityGroundMaterial,
+  createProceduralCityMaterial,
+  proceduralCityShaderVersion
+} from '../shaders/proceduralCity';
 
-export const motionReferenceVersion = 'motion-reference-2026-07-10.2';
+export const motionReferenceVersion = 'motion-reference-2026-07-16.1';
+
+const cityBlockSize = 160;
+const cityChunkSize = cityBlockSize * 4;
+const cityGroundCoverage = 14000;
+const cityGroundSegments = 128;
+const cityGroundShape = 'circle' as const;
+
+type CityDistrict = 0 | 1 | 2 | 3;
+
+const downtownDistrict: CityDistrict = 0;
+const commercialDistrict: CityDistrict = 1;
+const residentialDistrict: CityDistrict = 2;
+const landmarkDistrict: CityDistrict = 3;
+const cityDistrictNames = ['downtown', 'commercial', 'residential', 'landmark'] as const;
+const cityDistrictPattern: readonly CityDistrict[] = [
+  downtownDistrict,
+  commercialDistrict,
+  residentialDistrict,
+  downtownDistrict,
+  landmarkDistrict,
+  residentialDistrict,
+  commercialDistrict,
+  downtownDistrict,
+  commercialDistrict,
+  residentialDistrict
+];
+
+const cityBuildingSlotOffsets = [
+  [-240, -240],
+  [80, -240],
+  [-80, -80],
+  [240, -80],
+  [-240, 80],
+  [80, 80],
+  [-80, 240],
+  [240, 240]
+] as const;
 
 interface MotionReferenceProfile {
   moteCount: number;
   wispCount: number;
   markerPairCount: number;
   buildingCount: number;
+  cityChunkCount: number;
+  buildingsPerChunk: number;
 }
 
 interface WispState {
@@ -50,7 +98,30 @@ interface RouteState {
 interface BuildingState {
   position: Vector3;
   scale: Vector3;
+  tierScale: Vector3;
   rotation: Quaternion;
+  seed: number;
+  district: CityDistrict;
+}
+
+interface CityChunkState {
+  position: Vector3;
+  forward: Vector3;
+  landmarkTop: Vector3;
+  side: -1 | 1;
+  district: CityDistrict;
+  seed: number;
+  firstBuilding: number;
+  buildingCount: number;
+  landmarkActive: boolean;
+}
+
+interface DistrictMassingProfile {
+  width: readonly [number, number];
+  height: readonly [number, number];
+  depth: readonly [number, number];
+  tierRatio: readonly [number, number];
+  tierInset: readonly [number, number];
 }
 
 const motionReferenceProfiles: Record<QualityLevel, MotionReferenceProfile> = {
@@ -58,19 +129,25 @@ const motionReferenceProfiles: Record<QualityLevel, MotionReferenceProfile> = {
     moteCount: 96,
     wispCount: 18,
     markerPairCount: 26,
-    buildingCount: 48
+    buildingCount: 48,
+    cityChunkCount: 8,
+    buildingsPerChunk: 6
   },
   medium: {
     moteCount: 144,
     wispCount: 26,
     markerPairCount: 34,
-    buildingCount: 64
+    buildingCount: 64,
+    cityChunkCount: 8,
+    buildingsPerChunk: 8
   },
   high: {
     moteCount: 192,
     wispCount: 34,
     markerPairCount: 42,
-    buildingCount: 82
+    buildingCount: 80,
+    cityChunkCount: 10,
+    buildingsPerChunk: 8
   }
 };
 
@@ -84,7 +161,42 @@ const coolLight = new Color('#7fd5e8');
 const roseLight = new Color('#e98aa8');
 const cloudWarm = new Color('#cf806f');
 const cloudCool = new Color('#718aa0');
-const buildingColors = [new Color('#171522'), new Color('#21182b'), new Color('#10242a')];
+const districtBuildingColors: Record<CityDistrict, readonly Color[]> = {
+  [downtownDistrict]: [new Color('#111b26'), new Color('#1b1627'), new Color('#10252c')],
+  [commercialDistrict]: [new Color('#21182b'), new Color('#14262d'), new Color('#251a2b')],
+  [residentialDistrict]: [new Color('#27212c'), new Color('#1e292d'), new Color('#2a2028')],
+  [landmarkDistrict]: [new Color('#101d2a'), new Color('#26162e'), new Color('#10272e')]
+};
+const districtMassingProfiles: Record<CityDistrict, DistrictMassingProfile> = {
+  [downtownDistrict]: {
+    width: [42, 76],
+    height: [300, 540],
+    depth: [44, 82],
+    tierRatio: [0.22, 0.38],
+    tierInset: [0.55, 0.76]
+  },
+  [commercialDistrict]: {
+    width: [62, 108],
+    height: [220, 390],
+    depth: [56, 112],
+    tierRatio: [0.18, 0.3],
+    tierInset: [0.62, 0.82]
+  },
+  [residentialDistrict]: {
+    width: [78, 132],
+    height: [130, 260],
+    depth: [68, 128],
+    tierRatio: [0.12, 0.23],
+    tierInset: [0.7, 0.88]
+  },
+  [landmarkDistrict]: {
+    width: [48, 88],
+    height: [280, 480],
+    depth: [48, 92],
+    tierRatio: [0.2, 0.34],
+    tierInset: [0.54, 0.75]
+  }
+};
 
 export interface MotionReferenceFieldOptions {
   quality: QualityLevel;
@@ -105,9 +217,20 @@ export class MotionReferenceField {
   private readonly routeMarkers: InstancedMesh<BoxGeometry, MeshBasicMaterial>;
   private readonly markerStates: RouteState[];
   private readonly markerRecycleFlags: boolean[];
-  private readonly buildings: InstancedMesh<BoxGeometry, MeshBasicMaterial>;
+  private readonly buildings: InstancedMesh<BoxGeometry, ShaderMaterial>;
+  private readonly buildingTiers: InstancedMesh<BoxGeometry, ShaderMaterial>;
   private readonly buildingCaps: InstancedMesh<BoxGeometry, MeshBasicMaterial>;
+  private readonly buildingSpires: InstancedMesh<CylinderGeometry, MeshBasicMaterial>;
+  private readonly buildingMaterial: ShaderMaterial;
+  private readonly cityGround: Mesh<CircleGeometry, ShaderMaterial>;
+  private readonly cityGroundMaterial: ShaderMaterial;
+  private readonly buildingSeedAttribute: InstancedBufferAttribute;
+  private readonly buildingTierSeedAttribute: InstancedBufferAttribute;
+  private readonly buildingDistrictAttribute: InstancedBufferAttribute;
+  private readonly buildingTierDistrictAttribute: InstancedBufferAttribute;
   private readonly buildingStates: BuildingState[];
+  private readonly cityChunks: CityChunkState[];
+  private readonly cityChunkRecycleFlags: boolean[];
   private readonly geometries: BufferGeometry[] = [];
   private readonly materials: Material[] = [];
 
@@ -128,11 +251,22 @@ export class MotionReferenceField {
   private initialized = false;
   private randomState = 0x6d2b79f5;
   private recycleCount = 0;
+  private cityChunkRecycleCount = 0;
   private speedRatio = 0;
+  private cityGroundY = 0;
 
   constructor(scene: Scene, options: MotionReferenceFieldOptions) {
     this.scene = scene;
     this.profile = motionReferenceProfiles[options.quality];
+    if (
+      this.profile.cityChunkCount * this.profile.buildingsPerChunk !==
+      this.profile.buildingCount
+    ) {
+      throw new Error('City profile building capacity must be composed of complete chunks.');
+    }
+    if (this.profile.buildingsPerChunk > cityBuildingSlotOffsets.length) {
+      throw new Error('City profile exceeds the available building slots per chunk.');
+    }
     this.root.name = 'MotionReferenceField';
 
     const moteGeometry = new BufferGeometry();
@@ -201,22 +335,75 @@ export class MotionReferenceField {
     );
     this.root.add(this.routeMarkers);
 
+    const cityGroundGeometry = new CircleGeometry(
+      cityGroundCoverage * 0.5,
+      cityGroundSegments
+    );
+    this.cityGroundMaterial = createProceduralCityGroundMaterial();
+    this.cityGround = new Mesh(cityGroundGeometry, this.cityGroundMaterial);
+    this.cityGround.name = 'FarFieldCityGround';
+    this.cityGround.rotation.x = -Math.PI * 0.5;
+    this.cityGround.frustumCulled = false;
+    this.cityGround.renderOrder = -1;
+    this.root.add(this.cityGround);
+
     const buildingGeometry = new BoxGeometry(1, 1, 1);
-    const buildingMaterial = new MeshBasicMaterial({ color: 0xffffff, fog: true });
+    this.buildingSeedAttribute = new InstancedBufferAttribute(
+      new Float32Array(this.profile.buildingCount),
+      1
+    );
+    this.buildingDistrictAttribute = new InstancedBufferAttribute(
+      new Float32Array(this.profile.buildingCount),
+      1
+    );
+    buildingGeometry.setAttribute('aBuildingSeed', this.buildingSeedAttribute);
+    buildingGeometry.setAttribute('aDistrictType', this.buildingDistrictAttribute);
+    this.buildingMaterial = createProceduralCityMaterial();
     this.buildings = new InstancedMesh(
       buildingGeometry,
-      buildingMaterial,
+      this.buildingMaterial,
       this.profile.buildingCount
     );
-    this.buildings.name = 'FarFieldCitySilhouette';
+    this.buildings.name = 'FarFieldCityMainBodies';
     this.buildings.instanceMatrix.setUsage(DynamicDrawUsage);
     this.buildings.frustumCulled = false;
     this.buildingStates = Array.from({ length: this.profile.buildingCount }, () => ({
       position: new Vector3(),
       scale: new Vector3(1, 1, 1),
-      rotation: new Quaternion()
+      tierScale: new Vector3(1, 1, 1),
+      rotation: new Quaternion(),
+      seed: 0,
+      district: downtownDistrict
     }));
+    this.cityChunks = Array.from({ length: this.profile.cityChunkCount }, (_, index) =>
+      createCityChunkState(index, this.profile.buildingsPerChunk)
+    );
+    this.cityChunkRecycleFlags = Array.from(
+      { length: this.profile.cityChunkCount },
+      () => false
+    );
     this.root.add(this.buildings);
+
+    const tierGeometry = new BoxGeometry(1, 1, 1);
+    this.buildingTierSeedAttribute = new InstancedBufferAttribute(
+      new Float32Array(this.profile.buildingCount),
+      1
+    );
+    this.buildingTierDistrictAttribute = new InstancedBufferAttribute(
+      new Float32Array(this.profile.buildingCount),
+      1
+    );
+    tierGeometry.setAttribute('aBuildingSeed', this.buildingTierSeedAttribute);
+    tierGeometry.setAttribute('aDistrictType', this.buildingTierDistrictAttribute);
+    this.buildingTiers = new InstancedMesh(
+      tierGeometry,
+      this.buildingMaterial,
+      this.profile.buildingCount
+    );
+    this.buildingTiers.name = 'FarFieldCityUpperTiers';
+    this.buildingTiers.instanceMatrix.setUsage(DynamicDrawUsage);
+    this.buildingTiers.frustumCulled = false;
+    this.root.add(this.buildingTiers);
 
     const capGeometry = new BoxGeometry(1, 1, 1);
     const capMaterial = new MeshBasicMaterial({
@@ -235,19 +422,45 @@ export class MotionReferenceField {
     this.buildingCaps.renderOrder = 1;
     this.root.add(this.buildingCaps);
 
+    const spireGeometry = new CylinderGeometry(1.2, 2.6, 1, 8, 1, false);
+    const spireMaterial = new MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.82,
+      blending: AdditiveBlending,
+      depthWrite: false,
+      toneMapped: false,
+      fog: true
+    });
+    this.buildingSpires = new InstancedMesh(
+      spireGeometry,
+      spireMaterial,
+      this.profile.cityChunkCount
+    );
+    this.buildingSpires.name = 'FarFieldCityLandmarkSpires';
+    this.buildingSpires.instanceMatrix.setUsage(DynamicDrawUsage);
+    this.buildingSpires.frustumCulled = false;
+    this.buildingSpires.renderOrder = 1;
+    this.root.add(this.buildingSpires);
+
     this.geometries.push(
       moteGeometry,
       wispGeometry,
       markerGeometry,
+      cityGroundGeometry,
       buildingGeometry,
-      capGeometry
+      tierGeometry,
+      capGeometry,
+      spireGeometry
     );
     this.materials.push(
       this.moteMaterial,
       this.wispMaterial,
       markerMaterial,
-      buildingMaterial,
-      capMaterial
+      this.cityGroundMaterial,
+      this.buildingMaterial,
+      capMaterial,
+      spireMaterial
     );
 
     this.scene.add(this.root);
@@ -271,10 +484,16 @@ export class MotionReferenceField {
     this.speedRatio = smoothstep(vehicleState.speed, 38, 260);
 
     if (!this.initialized) {
+      this.cityGroundY = vehicleState.position.y - 600;
       this.populate(vehicleState);
       this.initialized = true;
     }
 
+    this.cityGround.position.set(
+      vehicleState.position.x,
+      this.cityGroundY - 1.5,
+      vehicleState.position.z
+    );
     this.updateMotes(vehicleState);
     this.updateWisps(camera, vehicleState);
     this.updateRouteMarkers(vehicleState);
@@ -284,6 +503,7 @@ export class MotionReferenceField {
     this.moteMaterial.uniforms.uSpeed.value = this.speedRatio;
     this.wispMaterial.uniforms.uTime.value = elapsed;
     this.wispMaterial.uniforms.uSpeed.value = this.speedRatio;
+    this.buildingMaterial.uniforms.uTime.value = elapsed;
 
     void dt;
   }
@@ -298,6 +518,55 @@ export class MotionReferenceField {
       this.markerStates[0]
     );
 
+    const districtCounts: Record<(typeof cityDistrictNames)[number], number> = {
+      downtown: 0,
+      commercial: 0,
+      residential: 0,
+      landmark: 0
+    };
+    for (const chunk of this.cityChunks) {
+      districtCounts[cityDistrictNames[chunk.district]] += 1;
+    }
+    let overlappingChunkPairs = 0;
+    for (let left = 0; left < this.cityChunks.length; left += 1) {
+      for (let right = left + 1; right < this.cityChunks.length; right += 1) {
+        const leftChunk = this.cityChunks[left];
+        const rightChunk = this.cityChunks[right];
+        if (
+          leftChunk.position.x === rightChunk.position.x &&
+          leftChunk.position.z === rightChunk.position.z
+        ) {
+          overlappingChunkPairs += 1;
+        }
+      }
+    }
+    const matrix = new Matrix4();
+    let nonFiniteInstanceMatrices = 0;
+    for (const mesh of [
+      this.buildings,
+      this.buildingTiers,
+      this.buildingCaps,
+      this.buildingSpires
+    ]) {
+      for (let index = 0; index < mesh.count; index += 1) {
+        mesh.getMatrixAt(index, matrix);
+        if (matrix.elements.some((value) => !Number.isFinite(value))) {
+          nonFiniteInstanceMatrices += 1;
+        }
+      }
+    }
+    const chunkLayout = this.cityChunks.map((chunk, index) => {
+      const relative = new Vector3().copy(chunk.position).sub(this.vehiclePosition);
+      return {
+        index,
+        side: chunk.side,
+        district: cityDistrictNames[chunk.district],
+        ahead: relative.dot(this.forward),
+        lateral: relative.dot(this.right),
+        directionAlignment: chunk.forward.dot(this.forward)
+      };
+    });
+
     return {
       version: motionReferenceVersion,
       initialized: this.initialized,
@@ -306,7 +575,28 @@ export class MotionReferenceField {
       counts: {
         near: this.profile.moteCount + this.profile.wispCount,
         mid: this.profile.markerPairCount * 2,
-        far: this.profile.buildingCount * 2
+        far: this.profile.buildingCount * 3 + this.profile.cityChunkCount
+      },
+      city: {
+        shaderVersion: proceduralCityShaderVersion,
+        shaderCompiles: Number(this.buildingMaterial.userData.compileCount ?? 0),
+        groundShaderCompiles: Number(this.cityGroundMaterial.userData.compileCount ?? 0),
+        instanceLayers: 4,
+        renderLayers: 5,
+        groundY: this.cityGroundY,
+        blockSize: cityBlockSize,
+        groundCoverage: cityGroundCoverage,
+        groundShape: cityGroundShape,
+        groundSegments: cityGroundSegments,
+        chunkSize: cityChunkSize,
+        chunkCount: this.profile.cityChunkCount,
+        buildingsPerChunk: this.profile.buildingsPerChunk,
+        chunkRecycleCount: this.cityChunkRecycleCount,
+        districtCounts,
+        landmarkCount: this.cityChunks.filter((chunk) => chunk.landmarkActive).length,
+        overlappingChunkPairs,
+        nonFiniteInstanceMatrices,
+        chunkLayout
       },
       routeAnchor: farthestMarker?.position.toArray() ?? null
     };
@@ -337,18 +627,11 @@ export class MotionReferenceField {
       this.routeMarkers.instanceColor.needsUpdate = true;
     }
 
-    for (let index = 0; index < this.buildingStates.length; index += 1) {
-      this.spawnBuilding(this.buildingStates[index], vehicleState, index);
-      this.writeBuildingInstances(index, this.buildingStates[index]);
+    for (let index = 0; index < this.cityChunks.length; index += 1) {
+      const ahead = 720 + Math.floor(index / 2) * cityChunkSize;
+      this.spawnCityChunk(this.cityChunks[index], vehicleState, index, ahead);
     }
-    this.buildings.instanceMatrix.needsUpdate = true;
-    this.buildingCaps.instanceMatrix.needsUpdate = true;
-    if (this.buildings.instanceColor) {
-      this.buildings.instanceColor.needsUpdate = true;
-    }
-    if (this.buildingCaps.instanceColor) {
-      this.buildingCaps.instanceColor.needsUpdate = true;
-    }
+    this.markCityInstancesDirty();
   }
 
   private updateTravelFrame(vehicleState: VehicleState): void {
@@ -468,29 +751,126 @@ export class MotionReferenceField {
   }
 
   private updateCity(vehicleState: VehicleState): void {
-    let changed = false;
-    for (let index = 0; index < this.buildingStates.length; index += 1) {
-      const building = this.buildingStates[index];
-      this.relative.copy(building.position).sub(vehicleState.position);
+    let maxAheadLeft = 520;
+    let maxAheadRight = 520;
+    let recycleTotal = 0;
+
+    for (let index = 0; index < this.cityChunks.length; index += 1) {
+      const chunk = this.cityChunks[index];
+      this.relative.copy(chunk.position).sub(vehicleState.position);
       const ahead = this.relative.dot(this.forward);
-      if (ahead < -650 || this.relative.lengthSq() > 3500 * 3500) {
-        this.spawnBuilding(building, vehicleState, index);
-        this.writeBuildingInstances(index, building);
-        this.recycleCount += 1;
-        changed = true;
+      const staleDirection = chunk.forward.dot(this.forward) < 0.68;
+      const shouldRecycle =
+        ahead < -cityChunkSize * 0.75 ||
+        this.relative.lengthSq() > 4800 * 4800 ||
+        (staleDirection && ahead < 1600);
+
+      this.cityChunkRecycleFlags[index] = shouldRecycle;
+      if (shouldRecycle) {
+        recycleTotal += 1;
+      } else if (chunk.side === -1) {
+        maxAheadLeft = Math.max(maxAheadLeft, ahead);
+      } else {
+        maxAheadRight = Math.max(maxAheadRight, ahead);
       }
     }
 
-    if (changed) {
-      this.buildings.instanceMatrix.needsUpdate = true;
-      this.buildingCaps.instanceMatrix.needsUpdate = true;
-      if (this.buildings.instanceColor) {
-        this.buildings.instanceColor.needsUpdate = true;
+    if (recycleTotal > Math.max(2, Math.floor(this.cityChunks.length / 3))) {
+      maxAheadLeft = 520;
+      maxAheadRight = 520;
+    }
+
+    let changed = false;
+    let recycledLeft = 0;
+    let recycledRight = 0;
+    for (let index = 0; index < this.cityChunks.length; index += 1) {
+      if (!this.cityChunkRecycleFlags[index]) {
+        continue;
       }
-      if (this.buildingCaps.instanceColor) {
-        this.buildingCaps.instanceColor.needsUpdate = true;
+
+      const chunk = this.cityChunks[index];
+      let ahead: number;
+      if (chunk.side === -1) {
+        maxAheadLeft += cityChunkSize;
+        ahead = maxAheadLeft;
+        recycledLeft += 1;
+      } else {
+        maxAheadRight += cityChunkSize;
+        ahead = maxAheadRight;
+        recycledRight += 1;
+      }
+
+      if (ahead > 3600) {
+        const sideOrder = chunk.side === -1 ? recycledLeft : recycledRight;
+        ahead = 720 + (sideOrder - 1) * cityChunkSize;
+      }
+
+      this.spawnCityChunk(chunk, vehicleState, index, ahead);
+      this.cityChunkRecycleCount += 1;
+      this.recycleCount += chunk.buildingCount;
+      changed = true;
+    }
+
+    if (changed) {
+      this.markCityInstancesDirty();
+    }
+  }
+
+  private spawnCityChunk(
+    chunk: CityChunkState,
+    vehicleState: VehicleState,
+    chunkIndex: number,
+    ahead: number
+  ): void {
+    chunk.position
+      .copy(vehicleState.position)
+      .addScaledVector(this.forward, ahead)
+      .addScaledVector(this.right, chunk.side * 420);
+    chunk.position.x = snapToChunkCenter(chunk.position.x);
+    chunk.position.y = this.cityGroundY;
+    chunk.position.z = snapToChunkCenter(chunk.position.z);
+    this.relative.copy(chunk.position).sub(vehicleState.position);
+    if (this.relative.dot(this.right) * chunk.side < 260) {
+      if (Math.abs(this.right.x) >= Math.abs(this.right.z)) {
+        chunk.position.x += Math.sign(this.right.x) * chunk.side * cityChunkSize;
+      } else {
+        chunk.position.z += Math.sign(this.right.z) * chunk.side * cityChunkSize;
       }
     }
+
+    for (let attempt = 0; attempt < this.cityChunks.length; attempt += 1) {
+      const overlapsActiveChunk = this.cityChunks.some(
+        (other, otherIndex) =>
+          otherIndex !== chunkIndex &&
+          !this.cityChunkRecycleFlags[otherIndex] &&
+          other.position.x === chunk.position.x &&
+          other.position.z === chunk.position.z
+      );
+      if (!overlapsActiveChunk) {
+        break;
+      }
+
+      if (Math.abs(this.forward.x) >= Math.abs(this.forward.z)) {
+        chunk.position.x += Math.sign(this.forward.x) * cityChunkSize;
+      } else {
+        chunk.position.z += Math.sign(this.forward.z) * cityChunkSize;
+      }
+    }
+    chunk.forward.copy(this.forward);
+    chunk.district = cityDistrictPattern[chunkIndex % cityDistrictPattern.length];
+    chunk.seed = this.random();
+    chunk.landmarkActive = chunk.district === landmarkDistrict;
+    chunk.landmarkTop.set(chunk.position.x, this.cityGroundY, chunk.position.z);
+
+    for (let localIndex = 0; localIndex < chunk.buildingCount; localIndex += 1) {
+      const globalIndex = chunk.firstBuilding + localIndex;
+      const building = this.buildingStates[globalIndex];
+      this.spawnBuilding(building, chunk, localIndex, globalIndex);
+      this.writeBuildingInstances(globalIndex, building);
+    }
+
+    this.writeLandmarkSpire(chunkIndex, chunk);
+    this.cityChunkRecycleFlags[chunkIndex] = false;
   }
 
   private spawnMote(index: number, vehicleState: VehicleState, ahead: number): void {
@@ -536,27 +916,109 @@ export class MotionReferenceField {
 
   private spawnBuilding(
     building: BuildingState,
-    vehicleState: VehicleState,
-    index: number
+    chunk: CityChunkState,
+    localIndex: number,
+    globalIndex: number
   ): void {
-    const ahead = this.randomRange(560, 2550);
-    const side = index % 2 === 0 ? -1 : 1;
-    const lateral = side * this.randomRange(260, 880);
-    const width = this.randomRange(28, 88);
-    const height = this.randomRange(110, 430) * (0.72 + ahead / 5000);
-    const depth = this.randomRange(30, 105);
-    const baseY = vehicleState.position.y - this.randomRange(540, 620);
+    const profile = districtMassingProfiles[chunk.district];
+    const isLandmark = chunk.landmarkActive && localIndex === 0;
+    const width = isLandmark
+      ? this.randomRange(62, 82)
+      : this.randomRange(profile.width[0], profile.width[1]);
+    const height = isLandmark
+      ? this.randomRange(650, 760)
+      : this.randomRange(profile.height[0], profile.height[1]);
+    const depth = isLandmark
+      ? this.randomRange(62, 86)
+      : this.randomRange(profile.depth[0], profile.depth[1]);
+    const tierHeightRatio = isLandmark
+      ? this.randomRange(0.28, 0.36)
+      : this.randomRange(profile.tierRatio[0], profile.tierRatio[1]);
+    const tierInsetX = this.randomRange(profile.tierInset[0], profile.tierInset[1]);
+    const tierInsetZ = this.randomRange(profile.tierInset[0], profile.tierInset[1]);
+    const bodyHeight = height * (1 - tierHeightRatio);
+    const tierHeight = height - bodyHeight;
+    const gridRotation = this.random() < 0.38 ? Math.PI * 0.5 : 0;
+    const slot = cityBuildingSlotOffsets[localIndex];
 
     building.position
-      .copy(vehicleState.position)
-      .addScaledVector(this.forward, ahead)
-      .addScaledVector(this.right, lateral);
-    building.position.y = baseY + height * 0.5;
-    building.scale.set(width, height, depth);
-    building.rotation.setFromAxisAngle(worldUp, this.randomRange(-Math.PI, Math.PI));
+      .set(chunk.position.x + slot[0], this.cityGroundY + bodyHeight * 0.5, chunk.position.z + slot[1]);
+    building.scale.set(width, bodyHeight, depth);
+    building.tierScale.set(width * tierInsetX, tierHeight, depth * tierInsetZ);
+    building.rotation.setFromAxisAngle(worldUp, gridRotation);
+    building.seed = this.random();
+    building.district = chunk.district;
 
-    this.buildings.setColorAt(index, buildingColors[index % buildingColors.length]);
-    this.buildingCaps.setColorAt(index, index % 3 === 0 ? coolLight : roseLight);
+    if (isLandmark) {
+      chunk.landmarkTop
+        .copy(building.position)
+        .addScaledVector(worldUp, building.scale.y * 0.5 + building.tierScale.y);
+    }
+
+    const palette = districtBuildingColors[building.district];
+    const colorIndex = Math.min(
+      palette.length - 1,
+      Math.floor(this.random() * palette.length)
+    );
+    this.buildings.setColorAt(globalIndex, palette[colorIndex]);
+    this.buildingTiers.setColorAt(
+      globalIndex,
+      palette[(colorIndex + (localIndex % 3 === 0 ? 1 : 0)) % palette.length]
+    );
+    const capColor = building.district === commercialDistrict
+      ? warmLight
+      : building.district === residentialDistrict
+        ? roseLight
+        : coolLight;
+    this.buildingCaps.setColorAt(globalIndex, capColor);
+    this.buildingSeedAttribute.setX(globalIndex, building.seed);
+    this.buildingTierSeedAttribute.setX(globalIndex, building.seed);
+    this.buildingDistrictAttribute.setX(globalIndex, building.district);
+    this.buildingTierDistrictAttribute.setX(globalIndex, building.district);
+  }
+
+  private writeLandmarkSpire(index: number, chunk: CityChunkState): void {
+    if (!chunk.landmarkActive) {
+      this.dummy.position.set(chunk.position.x, this.cityGroundY - 1000, chunk.position.z);
+      this.dummy.quaternion.identity();
+      this.dummy.scale.setScalar(0.001);
+      this.dummy.updateMatrix();
+      this.buildingSpires.setMatrixAt(index, this.dummy.matrix);
+      this.buildingSpires.setColorAt(index, coolLight);
+      return;
+    }
+
+    const spireHeight = 130 + chunk.seed * 80;
+    this.dummy.position
+      .copy(chunk.landmarkTop)
+      .addScaledVector(worldUp, spireHeight * 0.5 + 3);
+    this.dummy.quaternion.identity();
+    this.dummy.scale.set(1, spireHeight, 1);
+    this.dummy.updateMatrix();
+    this.buildingSpires.setMatrixAt(index, this.dummy.matrix);
+    this.buildingSpires.setColorAt(index, chunk.seed > 0.5 ? coolLight : warmLight);
+  }
+
+  private markCityInstancesDirty(): void {
+    this.buildings.instanceMatrix.needsUpdate = true;
+    this.buildingTiers.instanceMatrix.needsUpdate = true;
+    this.buildingCaps.instanceMatrix.needsUpdate = true;
+    this.buildingSpires.instanceMatrix.needsUpdate = true;
+    this.buildingSeedAttribute.needsUpdate = true;
+    this.buildingTierSeedAttribute.needsUpdate = true;
+    this.buildingDistrictAttribute.needsUpdate = true;
+    this.buildingTierDistrictAttribute.needsUpdate = true;
+
+    for (const mesh of [
+      this.buildings,
+      this.buildingTiers,
+      this.buildingCaps,
+      this.buildingSpires
+    ]) {
+      if (mesh.instanceColor) {
+        mesh.instanceColor.needsUpdate = true;
+      }
+    }
   }
 
   private writeMarkerPair(index: number, marker: RouteState): void {
@@ -584,8 +1046,17 @@ export class MotionReferenceField {
 
     this.dummy.position
       .copy(building.position)
-      .addScaledVector(worldUp, building.scale.y * 0.5 + 2.5);
-    this.dummy.scale.set(building.scale.x * 0.58, 2.2, building.scale.z * 0.58);
+      .addScaledVector(worldUp, building.scale.y * 0.5 + building.tierScale.y * 0.5);
+    this.dummy.quaternion.copy(building.rotation);
+    this.dummy.scale.copy(building.tierScale);
+    this.dummy.updateMatrix();
+    this.buildingTiers.setMatrixAt(index, this.dummy.matrix);
+
+    this.dummy.position
+      .copy(building.position)
+      .addScaledVector(worldUp, building.scale.y * 0.5 + building.tierScale.y + 1.7);
+    this.dummy.quaternion.copy(building.rotation);
+    this.dummy.scale.set(building.tierScale.x * 0.52, 1.3, building.tierScale.z * 0.52);
     this.dummy.updateMatrix();
     this.buildingCaps.setMatrixAt(index, this.dummy.matrix);
   }
@@ -632,9 +1103,27 @@ function createRouteState(): RouteState {
   };
 }
 
+function createCityChunkState(index: number, buildingsPerChunk: number): CityChunkState {
+  return {
+    position: new Vector3(),
+    forward: new Vector3(0, 0, -1),
+    landmarkTop: new Vector3(),
+    side: index % 2 === 0 ? -1 : 1,
+    district: cityDistrictPattern[index % cityDistrictPattern.length],
+    seed: 0,
+    firstBuilding: index * buildingsPerChunk,
+    buildingCount: buildingsPerChunk,
+    landmarkActive: false
+  };
+}
+
 function smoothstep(value: number, min: number, max: number): number {
   const normalized = Math.min(1, Math.max(0, (value - min) / (max - min)));
   return normalized * normalized * (3 - 2 * normalized);
+}
+
+function snapToChunkCenter(value: number): number {
+  return Math.floor(value / cityChunkSize) * cityChunkSize + cityChunkSize * 0.5;
 }
 
 function createMoteMaterial(): ShaderMaterial {

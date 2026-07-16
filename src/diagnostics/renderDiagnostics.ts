@@ -1,6 +1,6 @@
 import { Vector2, WebGLRenderer } from 'three';
 
-export const sunsetRenderDiagnosticsVersion = 'sunset-render-console-2026-07-10.1';
+export const sunsetRenderDiagnosticsVersion = 'sunset-render-console-2026-07-15.1';
 
 export interface FramebufferPixelSample {
   name: string;

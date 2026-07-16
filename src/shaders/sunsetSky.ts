@@ -2,7 +2,7 @@ import { Vector2, Vector3 } from 'three';
 
 export type AtmosphereDebugMode = 0 | 1 | 2;
 
-export const sunsetSkyShaderVersion = 'sunset-sky-2026-07-10.1';
+export const sunsetSkyShaderVersion = 'sunset-sky-2026-07-16.2';
 
 export const sunsetCloudLayerBounds = {
   bottom: 120,
@@ -16,7 +16,10 @@ export const sunsetCloudProfile = {
   billowEnd: 0.72,
   billowFloor: 0.58,
   detailInfluence: 0.08,
-  extinction: 0.0015
+  extinction: 0.0015,
+  coreShadowStart: 0.18,
+  coreShadowEnd: 0.72,
+  coreShadowStrength: 0.32
 } as const;
 
 export const sunsetSkyUniforms = {
@@ -30,7 +33,7 @@ export const sunsetSkyUniforms = {
 
 export const sunsetSkyQualityDefines = {
   low: {
-    CLOUD_MARCH_STEPS: 16,
+    CLOUD_MARCH_STEPS: 12,
     CLOUD_FBM_OCTAVES: 3,
     CLOUD_FAR_DISTANCE: '3200.0',
     CLOUD_DETAIL_LIGHTING: 0
@@ -99,6 +102,9 @@ export const sunsetSkyFragmentShader = /* glsl */ `
   const float CLOUD_BILLOW_FLOOR = ${sunsetCloudProfile.billowFloor.toFixed(2)};
   const float CLOUD_DETAIL_INFLUENCE = ${sunsetCloudProfile.detailInfluence.toFixed(2)};
   const float CLOUD_EXTINCTION = ${sunsetCloudProfile.extinction.toFixed(4)};
+  const float CLOUD_CORE_SHADOW_START = ${sunsetCloudProfile.coreShadowStart.toFixed(2)};
+  const float CLOUD_CORE_SHADOW_END = ${sunsetCloudProfile.coreShadowEnd.toFixed(2)};
+  const float CLOUD_CORE_SHADOW_STRENGTH = ${sunsetCloudProfile.coreShadowStrength.toFixed(2)};
 
   float hash13(vec3 p) {
     p = fract(p * 0.1031);
@@ -265,16 +271,24 @@ export const sunsetSkyFragmentShader = /* glsl */ `
 
         #if CLOUD_DETAIL_LIGHTING == 1
         float ahead = cloudDensity(pos + sunDir * 120.0);
-        float light = clamp((density - ahead) * 2.0 + 0.48, 0.16, 1.0);
+        float light = clamp((density - ahead) * 2.0 + 0.52, 0.18, 1.0);
         #else
         float heightLight = smoothstep(CLOUD_BOTTOM, CLOUD_TOP, pos.y);
-        float light = clamp(0.50 + heightLight * 0.24 + max(dot(rd, sunDir), 0.0) * 0.16, 0.24, 1.0);
+        float forwardLight = pow(max(dot(rd, sunDir), 0.0), 2.0);
+        float light = clamp(0.50 + heightLight * 0.22 + forwardLight * 0.18, 0.28, 0.94);
         #endif
 
-        float silver = pow(max(dot(rd, sunDir), 0.0), 4.0) * 0.35;
+        float coreShadow = smoothstep(
+          CLOUD_CORE_SHADOW_START,
+          CLOUD_CORE_SHADOW_END,
+          density
+        ) * CLOUD_CORE_SHADOW_STRENGTH;
+        light = clamp(light - coreShadow, 0.14, 1.0);
 
-        vec3 shadow = vec3(0.20, 0.13, 0.29);
-        vec3 lit = vec3(1.0, 0.57, 0.29);
+        float silver = pow(max(dot(rd, sunDir), 0.0), 4.0) * (0.42 - coreShadow * 0.45);
+
+        vec3 shadow = vec3(0.12, 0.09, 0.24);
+        vec3 lit = vec3(1.0, 0.63, 0.36);
         vec3 cloudCol = mix(shadow, lit, light);
         cloudCol += vec3(1.0, 0.55, 0.18) * silver;
 

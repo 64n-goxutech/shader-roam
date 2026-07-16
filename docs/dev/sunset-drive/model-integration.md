@@ -24,6 +24,8 @@ flowchart LR
     Center --> Yaw[Visual Yaw +180 Degrees]
     Yaw --> Metadata[Record Source Size / Scale / Yaw / -Z]
     Metadata --> Visual[Stable Vehicle Visual Root]
+    Visual --> WheelBinding[🆕 Bind Four Sanitized Wheel Node Names]
+    WheelBinding --> Spin[🆕 Speed / Radius Wheel Rotation]
     Fallback[Placeholder Flying Car] -->|Replace on success| Visual
 ```
 
@@ -36,12 +38,17 @@ flowchart LR
 - 🆕 模型长轴已沿 Z，运动控制器以本地 `-Z` 为前向；不额外修改 GLB 二进制。
 - ⚡ 视觉根节点绕本地 Y 轴正向旋转 `180°`；运动根节点保持零初始旋转，因此只改变模型朝向，不改变初始飞行轨迹。
 - 🆕 加载成功后释放占位车 geometry/material；加载失败时保留占位车并输出结构化错误。
+- 🆕 GLB 中四个车轮原名为 `Circle.005_10`、`Circle.001_11`、`Circle.002_12`、`Circle.003_13`；`GLTFLoader` 会移除保留字符 `.`，代码必须使用运行时名称 `Circle005_10`、`Circle001_11`、`Circle002_12`、`Circle003_13` 访问节点。
+- 🆕 `VehicleWheelAnimator` 使用车轮局部 X 轴自转，从基础四元数组合当前角度；左右镜像车轮按轴向点积得到相反的局部符号。
 
 ## 验证
 
+- 🆕 2026-07-16 浏览器运行时绑定到 `Circle005_10`、`Circle001_11`、`Circle002_12`、`Circle003_13`，未出现缺失节点；四轮半径约 `0.36436`。
+- 🆕 左右轮的局部旋转符号为 `-1 / +1`；`200 ms` 两次采样角度发生变化且四轮保持同步，模型状态为 `ready`。
+- 🆕 `1280 × 720` 帧缓冲检查 `glError = 0`，浏览器无 error/warn；`npm run build` 通过并转换 27 个模块。
 - ⚡ 文件与 attribution 均位于车型目录。
 - ⚡ Vite 静态资源响应为 `200 model/gltf-binary`。
 - ⚡ 项目 `GLTFLoader` 实际解析出 28 个 mesh、0 个动画；规范化函数返回预期尺寸和中心。
 - ⚡ `yawDegrees: 180` 输出 `3.14159265` 弧度；旋转后 AABB 约为 `2.282 x 1.557 x 5.2`，中心误差保持在浮点精度范围内。
 - ⚡ TypeScript/Vite 构建通过。
-- ⚡ 浏览器会话不可用，材质呈现、车头方向与最终构图仍需在正常 WebGL 浏览器中确认。
+- ⚡ 2026-07-16 已在正常 WebGL 浏览器中确认 AE86 材质、车尾跟随构图、模型加载状态和车轮运行时绑定。

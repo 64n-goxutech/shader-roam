@@ -27,6 +27,7 @@ import {
 import { ArcadeFlyingCar } from '../vehicles/ArcadeFlyingCar';
 import { createPlaceholderFlyingCar } from '../vehicles/createPlaceholderFlyingCar';
 import { loadVehicleModel } from '../vehicles/loadVehicleModel';
+import { VehicleWheelAnimator } from '../vehicles/VehicleWheelAnimator';
 import type { ExperienceConfig, HudElements } from './types';
 
 export interface ExperienceOptions {
@@ -34,6 +35,8 @@ export interface ExperienceOptions {
   config: ExperienceConfig;
   hud: HudElements;
 }
+
+const hudUpdateInterval = 0.1;
 
 export class Experience {
   private readonly canvas: HTMLCanvasElement;
@@ -55,9 +58,12 @@ export class Experience {
   private animationFrame = 0;
   private running = false;
   private frameCount = 0;
-  private nextDiagnosticElapsed = 0;
+  private nextHudUpdateElapsed = 0;
   private lastRawDelta = 0;
+  private displayedSpeed = '';
+  private displayedAltitude = '';
   private vehicleModelState: 'loading' | 'ready' | 'fallback' = 'loading';
+  private vehicleWheels: VehicleWheelAnimator | null = null;
 
   constructor(options: ExperienceOptions) {
     this.canvas = options.canvas;
@@ -180,21 +186,14 @@ export class Experience {
     const rawInput = this.input.snapshot();
     this.controls.update(rawInput, dt);
     this.vehicle.update(dt);
+    this.vehicleWheels?.update(dt, this.vehicle.state.speed);
     this.orbitCameraRig.update(dt, this.vehicle.state);
     this.motionReferences.update(dt, elapsed, this.camera, this.vehicle.state);
     this.environment.update(elapsed, this.camera.position, this.vehicle.state);
-    this.updateHud();
+    this.updateHud(elapsed);
 
     this.renderer.render(this.scene, this.camera);
     this.frameCount += 1;
-
-    if (this.frameCount === 1 || elapsed >= this.nextDiagnosticElapsed) {
-      this.nextDiagnosticElapsed = elapsed + 5;
-      this.logDiagnostics(
-        this.frameCount === 1 ? 'first-rendered-frame' : 'periodic-render-health',
-        readFramebufferPixelSamples(this.renderer)
-      );
-    }
 
     this.animationFrame = window.requestAnimationFrame(this.tick);
   };
@@ -244,6 +243,7 @@ export class Experience {
         visualChildren: this.vehicleVisualRoot.children.map((child) => child.name || child.type),
         position: this.vehicle.state.position.toArray(),
         speed: this.vehicle.state.speed,
+        wheels: this.vehicleWheels?.getDiagnostics() ?? null,
         attitude: this.vehicle.getDiagnostics()
       },
       renderer: getRendererDiagnostics(this.renderer),
@@ -278,12 +278,26 @@ export class Experience {
     return snapshot;
   }
 
-  private updateHud(): void {
-    this.hud.speed?.replaceChildren(Math.round(this.vehicle.state.speed).toString().padStart(3, '0'));
-    this.hud.altitude?.replaceChildren(
-      Math.max(0, Math.round(this.vehicle.state.position.y)).toString().padStart(3, '0')
-    );
-    this.hud.environment?.replaceChildren(this.config.environmentLabel);
+  private updateHud(elapsed: number): void {
+    if (elapsed < this.nextHudUpdateElapsed) {
+      return;
+    }
+
+    this.nextHudUpdateElapsed = elapsed + hudUpdateInterval;
+    const speed = Math.round(this.vehicle.state.speed).toString().padStart(3, '0');
+    const altitude = Math.max(0, Math.round(this.vehicle.state.position.y))
+      .toString()
+      .padStart(3, '0');
+
+    if (speed !== this.displayedSpeed) {
+      this.displayedSpeed = speed;
+      this.hud.speed?.replaceChildren(speed);
+    }
+
+    if (altitude !== this.displayedAltitude) {
+      this.displayedAltitude = altitude;
+      this.hud.altitude?.replaceChildren(altitude);
+    }
   }
 
   private async loadVehicleVisual(placeholder: Object3D): Promise<void> {
@@ -295,10 +309,12 @@ export class Experience {
       this.vehicleVisualRoot.remove(placeholder);
       disposeObject3D(placeholder);
       this.vehicleVisualRoot.add(model);
+      this.vehicleWheels = new VehicleWheelAnimator(model);
       this.vehicleModelState = 'ready';
       console.info('[ShaderRoam][Experience][vehicle-model-ready]', {
         vehicleId: this.config.vehicleId,
-        model: model.userData.vehicleModel
+        model: model.userData.vehicleModel,
+        wheels: this.vehicleWheels.getDiagnostics()
       });
     } catch (error) {
       this.vehicleModelState = 'fallback';

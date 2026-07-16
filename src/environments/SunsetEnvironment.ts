@@ -101,7 +101,7 @@ export class SunsetEnvironment {
     this.sky.renderOrder = -10;
     this.sky.onBeforeRender = (renderer, _scene, camera): void => {
       this.beforeRenderCount += 1;
-      if (shouldLogDrawCount(this.beforeRenderCount)) {
+      if (shouldLogInitialDraw(this.beforeRenderCount)) {
         console.info('[ShaderRoam][SunsetEnvironment][draw:before]', {
           count: this.beforeRenderCount,
           cameraPosition: camera.position.toArray(),
@@ -114,7 +114,7 @@ export class SunsetEnvironment {
     };
     this.sky.onAfterRender = (renderer): void => {
       this.afterRenderCount += 1;
-      if (shouldLogDrawCount(this.afterRenderCount)) {
+      if (shouldLogInitialDraw(this.afterRenderCount)) {
         console.info('[ShaderRoam][SunsetEnvironment][draw:after]', {
           count: this.afterRenderCount,
           callsAfterSky: renderer.info.render.calls,
@@ -264,8 +264,8 @@ export class SunsetEnvironment {
   }
 }
 
-function shouldLogDrawCount(count: number): boolean {
-  return count <= 2 || count % 300 === 0;
+function shouldLogInitialDraw(count: number): boolean {
+  return count <= 2;
 }
 
 function calculateCloudSegment(originY: number, directionY: number, farDistance: number) {

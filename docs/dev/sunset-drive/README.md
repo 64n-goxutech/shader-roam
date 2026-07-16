@@ -21,9 +21,12 @@
 6. 🆕 将云端环境与 shader 迁移为 `SunsetEnvironment` / `sunsetSky`，更新落日配色、太阳方向、雾和灯光。
 7. 🆕 更新 HUD、页面标题、调试 API 和 console 诊断命名。
 8. 🆕 完成构建、资源响应、模型加载和 WebGL 视觉验收。
+9. 🆕 访问 AE86 GLB 中的四个独立车轮节点，建立保留原始姿态的旋转绑定，并由车辆线速度在主循环中驱动车轮自转。
 
 ## 实际落地
 
+- 🆕 `VehicleWheelAnimator` 按 `GLTFLoader` 清洗后的实际节点名访问四个车轮，公开 `wheelNodes` 引用，缓存基础四元数、半径和镜像旋转符号，并由 `Experience` 每帧传入线速度驱动自转。
+- 🆕 车轮节点在 GLB JSON 中原名含 `.`，加载后实际变为 `Circle005_10`、`Circle001_11`、`Circle002_12`、`Circle003_13`；绑定缺失时保持空控制器，不影响模型加载和渲染。
 - ⚡ 模型已迁移至约定目录，并新增同目录 `ATTRIBUTION.md`。
 - ⚡ `ExperienceConfig` 已加入 `environmentLabel` 与 `vehicleModelUrl`；默认环境/载具为 `sunset-drive` / `toyota-ae86-trueno`。
 - ⚡ `ExperienceConfig.vehicleModelYawDegrees` 设置为 `180`；占位飞车与 AE86 使用相同的本地 Y 轴视觉旋转，替换时不会跳角度。
@@ -40,6 +43,10 @@
 
 ## 验证记录
 
+- 🆕 2026-07-16 `npm run build` 通过，Vite 转换 27 个模块；仅保留既有的单包体积提示。
+- 🆕 浏览器运行时确认四个清洗后车轮节点全部绑定，`missingNodeNames` 为空；四轮测得半径约 `0.36436`，左右镜像旋转符号分别为 `-1 / +1`。
+- 🆕 相隔 `200 ms` 的运行时采样中四轮角度由约 `2.78` 变化到 `0.68`（按 `2π` 取模），证明主循环持续更新真实车轮节点，而非只更新诊断数据。
+- 🆕 桌面 `1280 × 720` 复验中 AE86 与城市正常显示，模型状态 `ready`、车轮控制 `active`、帧缓冲 `glError = 0`，浏览器没有 error/warn 日志。
 - ⚡ `npm run build` 通过，Vite 转换 25 个模块。
 - ⚡ `/models/vehicles/toyota-ae86/toyota-ae86-trueno.glb` 返回 `200 OK`、`model/gltf-binary`，长度 `1604336` 字节。
 - ⚡ 项目 `GLTFLoader` 实际解析成功：28 个 mesh、0 个动画；`loadVehicleModel` 输出中心误差小于浮点精度。
@@ -47,13 +54,14 @@
 - ⚡ 开发服务器返回 `sunset-sky-2026-07-10.1` 和 `sunset-render-console-2026-07-10.1`。
 - ⚡ 源码中已无 `CloudEnvironment`、`cloudSky`、`ArcadeAircraft`、`placeholder-jet` 和旧 debug API 引用。
 - ⚡ 运动参照 60 秒联合飞行模拟通过：低质量档固定维持近景 `114`、中景 `52`、远景 `96` 个实例，完成 `6216` 次有界回收且实例矩阵均为有限值。
-- ⚡ 浏览器控制端当前没有可用会话，仍未能执行 WebGL 截图、canvas 像素检查和真实 GLB/运动参照目测。
+- ⚡ 2026-07-16 浏览器会话已恢复，已完成 WebGL 截图、帧缓冲像素检查和真实 GLB/程序化城市目测。
 
 ## 主题验收
 
-- 首屏明确显示 AE86 飞车，而不是占位飞机。当前需浏览器目测确认。
-- 天空具有暖色地平线、低角度太阳、冷色高空和紫红云影。当前需浏览器目测确认。
-- 模型尺寸已规范化并应用 `+180°` 视觉 yaw；最终车头观感仍需浏览器目测确认。
+- ⚡ 首屏明确显示 AE86 飞车而不是占位模型，已通过 `1280 × 720` 浏览器目测。
+- ⚡ 天空具有暖色地平线、低角度太阳、冷色高空和紫红云影，已通过浏览器目测。
+- ⚡ 模型尺寸已规范化并应用 `+180°` 视觉 yaw，车尾跟随构图已通过浏览器目测。
 - GLB 加载失败时保留飞车占位模型，动画循环不崩溃。
+- 🆕 GLB 加载成功后四个车轮随当前车辆线速度自转；任一预期节点缺失时诊断会列出名称且渲染循环不崩溃。
 - HUD 使用短标签 `SUNSET`，在移动端不溢出。
 - `npm run build` 通过，模型 URL 返回 `200`。
