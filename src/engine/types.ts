@@ -1,20 +1,9 @@
 import type { Object3D, Quaternion, Vector3 } from 'three';
 
-export type QualityLevel = 'low' | 'medium' | 'high';
-
 export interface ExperienceConfig {
-  environmentId: string;
-  environmentLabel: string;
   vehicleId: string;
   vehicleModelUrl: string;
   vehicleModelYawDegrees: number;
-  quality: QualityLevel;
-}
-
-export interface HudElements {
-  speed: HTMLElement | null;
-  altitude: HTMLElement | null;
-  environment: HTMLElement | null;
 }
 
 export interface VehicleState {

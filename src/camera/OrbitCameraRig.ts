@@ -7,7 +7,7 @@ export interface OrbitCameraRigOptions {
   domElement: HTMLElement;
 }
 
-const initialOffset = new Vector3(0, 2.7, 13.5);
+const initialOffset = new Vector3(0, 2.25, 9.5);
 const targetOffset = new Vector3(0, 0.35, 0);
 const baseFov = 64;
 const maxFov = 74;

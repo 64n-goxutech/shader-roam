@@ -1,5 +1,7 @@
 # 项目初始化原理文档
 
+> ⚡ 2026-08-04：初始化阶段的环境架构已退出当前运行时；现行最小架构见 `docs/architecture/core-drive/README.md`。
+
 ## 1. 架构设计
 
 ```mermaid

@@ -1,6 +1,8 @@
 import {
   Color,
+  DirectionalLight,
   Group,
+  HemisphereLight,
   MathUtils,
   Mesh,
   Object3D,
@@ -15,60 +17,49 @@ import {
 import { OrbitCameraRig } from '../camera/OrbitCameraRig';
 import { ControlSystem } from '../controls/ControlSystem';
 import { KeyboardPointerInput } from '../controls/KeyboardPointerInput';
-import { SunsetEnvironment } from '../environments/SunsetEnvironment';
-import { MotionReferenceField } from '../environments/MotionReferenceField';
-import type { AtmosphereDebugMode } from '../shaders/sunsetSky';
 import {
+  coreRenderDiagnosticsVersion,
   getRendererDiagnostics,
   installRendererConsoleDiagnostics,
-  readFramebufferPixelSamples,
-  sunsetRenderDiagnosticsVersion
+  readFramebufferPixelSamples
 } from '../diagnostics/renderDiagnostics';
 import { ArcadeFlyingCar } from '../vehicles/ArcadeFlyingCar';
 import { createPlaceholderFlyingCar } from '../vehicles/createPlaceholderFlyingCar';
 import { loadVehicleModel } from '../vehicles/loadVehicleModel';
 import { VehicleWheelAnimator } from '../vehicles/VehicleWheelAnimator';
-import type { ExperienceConfig, HudElements } from './types';
+import type { ExperienceConfig } from './types';
 
 export interface ExperienceOptions {
   canvas: HTMLCanvasElement;
   config: ExperienceConfig;
-  hud: HudElements;
 }
 
-const hudUpdateInterval = 0.1;
+const maxFrameDelta = 0.1;
 
 export class Experience {
   private readonly canvas: HTMLCanvasElement;
   private readonly config: ExperienceConfig;
-  private readonly hud: HudElements;
   private readonly renderer: WebGLRenderer;
   private readonly scene = new Scene();
-  private readonly camera = new PerspectiveCamera(64, 1, 0.1, 9000);
+  private readonly camera = new PerspectiveCamera(64, 1, 0.1, 1500);
   private readonly timer = new Timer();
   private readonly input: KeyboardPointerInput;
   private readonly controls = new ControlSystem();
   private readonly vehicle: ArcadeFlyingCar;
   private readonly vehicleVisualRoot: Group;
   private readonly orbitCameraRig: OrbitCameraRig;
-  private readonly environment: SunsetEnvironment;
-  private readonly motionReferences: MotionReferenceField;
   private readonly removeRendererDiagnostics: () => void;
 
   private animationFrame = 0;
   private running = false;
   private frameCount = 0;
-  private nextHudUpdateElapsed = 0;
   private lastRawDelta = 0;
-  private displayedSpeed = '';
-  private displayedAltitude = '';
   private vehicleModelState: 'loading' | 'ready' | 'fallback' = 'loading';
   private vehicleWheels: VehicleWheelAnimator | null = null;
 
   constructor(options: ExperienceOptions) {
     this.canvas = options.canvas;
     this.config = options.config;
-    this.hud = options.hud;
 
     this.renderer = new WebGLRenderer({
       canvas: this.canvas,
@@ -76,12 +67,13 @@ export class Experience {
       powerPreference: 'high-performance'
     });
     this.renderer.outputColorSpace = SRGBColorSpace;
-    this.renderer.setClearColor(new Color('#120d1d'));
-    this.renderer.setPixelRatio(getPixelRatioCap(this.config.quality));
+    this.renderer.setClearColor(new Color('#111318'));
+    this.renderer.setPixelRatio(1);
     this.removeRendererDiagnostics = installRendererConsoleDiagnostics(this.renderer, this.canvas);
     this.timer.connect(document);
 
     this.input = new KeyboardPointerInput(this.canvas);
+    this.addVehicleLighting();
 
     const vehicleObject = new Group();
     vehicleObject.name = this.config.vehicleId;
@@ -104,15 +96,8 @@ export class Experience {
       camera: this.camera,
       domElement: this.canvas
     });
-    this.environment = new SunsetEnvironment(this.scene, {
-      quality: this.config.quality
-    });
-    this.motionReferences = new MotionReferenceField(this.scene, {
-      quality: this.config.quality
-    });
     this.input.setPointerFlightEnabled(false);
 
-    this.hud.environment?.replaceChildren(this.config.environmentLabel);
     window.addEventListener('resize', this.resize);
     document.addEventListener('keydown', this.handleKeyDown, { capture: true });
     this.resize();
@@ -148,7 +133,6 @@ export class Experience {
     window.cancelAnimationFrame(this.animationFrame);
     this.input.dispose();
     this.orbitCameraRig.dispose();
-    this.motionReferences.dispose();
     this.timer.dispose();
     this.removeRendererDiagnostics();
     window.removeEventListener('resize', this.resize);
@@ -167,11 +151,6 @@ export class Experience {
     return this.logDiagnostics(reason, readFramebufferPixelSamples(this.renderer));
   }
 
-  setAtmosphereDebugMode(mode: AtmosphereDebugMode): void {
-    this.environment.setDebugMode(mode);
-    this.dumpDiagnostics(`atmosphere-debug-mode-${mode}`);
-  }
-
   private readonly tick = (timestamp: number): void => {
     if (!this.running) {
       return;
@@ -179,8 +158,7 @@ export class Experience {
 
     this.timer.update(timestamp);
     const rawDt = this.timer.getDelta();
-    const dt = Math.min(rawDt, 1 / 30);
-    const elapsed = this.timer.getElapsed();
+    const dt = Math.min(Math.max(rawDt, 0), maxFrameDelta);
     this.lastRawDelta = rawDt;
 
     const rawInput = this.input.snapshot();
@@ -188,9 +166,6 @@ export class Experience {
     this.vehicle.update(dt);
     this.vehicleWheels?.update(dt, this.vehicle.state.speed);
     this.orbitCameraRig.update(dt, this.vehicle.state);
-    this.motionReferences.update(dt, elapsed, this.camera, this.vehicle.state);
-    this.environment.update(elapsed, this.camera.position, this.vehicle.state);
-    this.updateHud(elapsed);
 
     this.renderer.render(this.scene, this.camera);
     this.frameCount += 1;
@@ -206,7 +181,6 @@ export class Experience {
     this.camera.updateProjectionMatrix();
 
     this.renderer.setSize(width, height, false);
-    this.environment.resize(this.renderer);
     console.info('[ShaderRoam][Experience][resize]', {
       cssSize: [width, height],
       drawingBuffer: this.renderer.getDrawingBufferSize(new Vector2()).toArray(),
@@ -219,7 +193,7 @@ export class Experience {
     const cameraForward = this.camera.getWorldDirection(new Vector3());
 
     return {
-      diagnosticsVersion: sunsetRenderDiagnosticsVersion,
+      diagnosticsVersion: coreRenderDiagnosticsVersion,
       runtime: {
         running: this.running,
         frameCount: this.frameCount,
@@ -247,8 +221,12 @@ export class Experience {
         attitude: this.vehicle.getDiagnostics()
       },
       renderer: getRendererDiagnostics(this.renderer),
-      sunset: this.environment.getDiagnostics(this.camera, this.renderer),
-      motionReferences: this.motionReferences.getDiagnostics(),
+      scene: {
+        children: this.scene.children.map((child) => ({
+          name: child.name || child.type,
+          type: child.type
+        }))
+      },
       framebuffer
     };
   }
@@ -258,46 +236,16 @@ export class Experience {
     framebuffer: ReturnType<typeof readFramebufferPixelSamples>
   ) {
     const snapshot = this.createDiagnostics(framebuffer);
-    const failedChecks = Object.entries(snapshot.sunset.checks)
-      .filter(([, passed]) => !passed)
-      .map(([name]) => name);
 
-    console.groupCollapsed(`[ShaderRoam][diagnostics:${reason}] Sunset render snapshot`);
+    console.groupCollapsed(`[ShaderRoam][diagnostics:${reason}] Core drive render snapshot`);
     console.info('snapshot', snapshot);
     console.table(framebuffer.samples);
     if (framebuffer.error || framebuffer.glError !== 0) {
       console.error('framebuffer readback failed', framebuffer);
     }
-    if (failedChecks.length > 0) {
-      console.warn('failed sunset render checks', failedChecks);
-    } else {
-      console.info('all sunset render boundary checks passed');
-    }
     console.groupEnd();
 
     return snapshot;
-  }
-
-  private updateHud(elapsed: number): void {
-    if (elapsed < this.nextHudUpdateElapsed) {
-      return;
-    }
-
-    this.nextHudUpdateElapsed = elapsed + hudUpdateInterval;
-    const speed = Math.round(this.vehicle.state.speed).toString().padStart(3, '0');
-    const altitude = Math.max(0, Math.round(this.vehicle.state.position.y))
-      .toString()
-      .padStart(3, '0');
-
-    if (speed !== this.displayedSpeed) {
-      this.displayedSpeed = speed;
-      this.hud.speed?.replaceChildren(speed);
-    }
-
-    if (altitude !== this.displayedAltitude) {
-      this.displayedAltitude = altitude;
-      this.hud.altitude?.replaceChildren(altitude);
-    }
   }
 
   private async loadVehicleVisual(placeholder: Object3D): Promise<void> {
@@ -333,6 +281,17 @@ export class Experience {
       this.orbitCameraRig.reset(this.vehicle.state);
     }
   };
+
+  private addVehicleLighting(): void {
+    const fill = new HemisphereLight(0xe7edf4, 0x181a1e, 1.8);
+    fill.name = 'VehicleFillLight';
+    this.scene.add(fill);
+
+    const key = new DirectionalLight(0xffffff, 2.6);
+    key.name = 'VehicleKeyLight';
+    key.position.set(8, 12, 10);
+    this.scene.add(key);
+  }
 }
 
 function disposeObject3D(object: Object3D): void {
@@ -345,16 +304,4 @@ function disposeObject3D(object: Object3D): void {
     const materials = Array.isArray(child.material) ? child.material : [child.material];
     materials.forEach((material) => material.dispose());
   });
-}
-
-function getPixelRatioCap(quality: ExperienceConfig['quality']): number {
-  if (quality === 'high') {
-    return Math.min(window.devicePixelRatio, 1.5);
-  }
-
-  if (quality === 'medium') {
-    return Math.min(window.devicePixelRatio, 1.15);
-  }
-
-  return 1;
 }

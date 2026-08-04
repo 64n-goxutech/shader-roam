@@ -14,7 +14,6 @@ graph TB
     HeadingFollow --> OrbitRig
     OrbitRig --> Camera[PerspectiveCamera]
     Camera --> Renderer[WebGLRenderer]
-    VehicleState --> Environment[Environment Uniforms]
 ```
 
 ## 2. 模块设计
@@ -34,7 +33,7 @@ graph TB
 - 🆕 速度从巡航到高速区间时，FOV 在 `64–74°` 间平滑变化；`R` 重置时恢复 `64°`。
 - 🆕 相机只跟随载具水平航向，不跟随俯仰和视觉侧倾；用户选定的 orbit 观察角会相对车身航向保持。
 - 🆕 `R` 使用当前载具航向旋转默认后上方偏移，始终回到车尾观察，而不是世界固定 `+Z`。
-- ⚡ 默认 target 高度改为车身中心上方 `0.35`，默认相机偏移改为 `(0, 2.7, 13.5)`，让低角度太阳落在首屏右上区域。
+- ⚡ 默认 target 高度保持车身中心上方 `0.35`，核心驾驶相机偏移收近为 `(0, 2.25, 9.5)`，让 AE86 在无环境画面中保持主体比例。
 - 🆕 `R` 用于将 orbit 相机重置到飞车附近。
 
 ## 4. 核心数据结构

@@ -1,6 +1,6 @@
 import { Vector2, WebGLRenderer } from 'three';
 
-export const sunsetRenderDiagnosticsVersion = 'sunset-render-console-2026-07-15.1';
+export const coreRenderDiagnosticsVersion = 'core-drive-render-2026-08-04.1';
 
 export interface FramebufferPixelSample {
   name: string;
@@ -60,7 +60,7 @@ export function installRendererConsoleDiagnostics(
   };
 
   console.groupCollapsed('[ShaderRoam][WebGL][init] Renderer and GPU capabilities');
-  console.info('diagnostics version', sunsetRenderDiagnosticsVersion);
+  console.info('diagnostics version', coreRenderDiagnosticsVersion);
   console.info('context', {
     webgl2: renderer.capabilities.isWebGL2,
     contextAttributes: gl.getContextAttributes(),

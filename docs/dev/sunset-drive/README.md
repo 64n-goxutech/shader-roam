@@ -1,5 +1,7 @@
 # 落日飞车场景开发文档
 
+> ⚡ 2026-08-04：落日环境、场景 HUD 和运动参照已删除，本文保留历史交付记录；当前交付见 `docs/dev/core-drive/README.md`。
+
 ## 目标
 
 ⚡ 将当前通用云层飞行场景升级为“落日飞车”：使用用户提供的 Toyota Corolla AE86 Trueno GLB，采用航向稳定、俯仰受限且视觉姿态独立的 arcade 控制与 orbit 观察方式，并把 shader、环境光、HUD 和诊断命名统一到落日主题。

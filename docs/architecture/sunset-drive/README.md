@@ -1,5 +1,7 @@
 # 落日飞车场景原理文档
 
+> ⚡ 2026-08-04：本场景架构已从运行时移除，仅保留历史设计记录。当前架构见 `docs/architecture/core-drive/README.md`。
+
 ## 1. 架构设计
 
 ```mermaid

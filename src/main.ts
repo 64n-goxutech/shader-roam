@@ -1,14 +1,12 @@
 import './style.css';
 import { Experience } from './engine/Experience';
 import { defaultExperienceConfig } from './config/experienceConfig';
-import { sunsetRenderDiagnosticsVersion } from './diagnostics/renderDiagnostics';
-import type { AtmosphereDebugMode } from './shaders/sunsetSky';
+import { coreRenderDiagnosticsVersion } from './diagnostics/renderDiagnostics';
 
 interface ShaderRoamDebugApi {
   version: string;
   dump: () => ReturnType<Experience['dumpDiagnostics']>;
   snapshot: () => ReturnType<Experience['getDiagnostics']>;
-  setAtmosphereDebugMode: (mode: AtmosphereDebugMode) => void;
 }
 
 declare global {
@@ -18,7 +16,7 @@ declare global {
 }
 
 console.info('[ShaderRoam][bootstrap] Module loaded.', {
-  diagnosticsVersion: sunsetRenderDiagnosticsVersion,
+  diagnosticsVersion: coreRenderDiagnosticsVersion,
   moduleUrl: import.meta.url,
   mode: import.meta.env.MODE,
   dev: import.meta.env.DEV,
@@ -47,29 +45,21 @@ if (!canvas) {
 
 const experience = new Experience({
   canvas,
-  config: defaultExperienceConfig,
-  hud: {
-    speed: document.querySelector<HTMLElement>('#hud-speed'),
-    altitude: document.querySelector<HTMLElement>('#hud-altitude'),
-    environment: document.querySelector<HTMLElement>('#hud-environment')
-  }
+  config: defaultExperienceConfig
 });
 
 experience.start();
 
 window.__shaderRoamDebug = {
-  version: sunsetRenderDiagnosticsVersion,
+  version: coreRenderDiagnosticsVersion,
   dump: () => experience.dumpDiagnostics(),
-  snapshot: () => experience.getDiagnostics(),
-  setAtmosphereDebugMode: (mode) => experience.setAtmosphereDebugMode(mode)
+  snapshot: () => experience.getDiagnostics()
 };
 
 console.info('[ShaderRoam][bootstrap] Debug API ready.', {
   api: 'window.__shaderRoamDebug',
   commands: {
     dump: 'window.__shaderRoamDebug.dump()',
-    normal: 'window.__shaderRoamDebug.setAtmosphereDebugMode(0)',
-    cloudLayerIntersection: 'window.__shaderRoamDebug.setAtmosphereDebugMode(1)',
-    integratedCloudOpacity: 'window.__shaderRoamDebug.setAtmosphereDebugMode(2)'
+    snapshot: 'window.__shaderRoamDebug.snapshot()'
   }
 });
