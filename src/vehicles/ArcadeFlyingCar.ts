@@ -1,6 +1,6 @@
 import { Euler, MathUtils, Object3D, Vector3 } from 'three';
 import type { FlightCommand } from '../controls/types';
-import type { VehicleModule, VehicleState } from '../engine/types';
+import type { VehicleModule, VehicleSimulationState } from '../engine/types';
 
 export interface ArcadeFlyingCarOptions {
   object: Object3D;
@@ -15,7 +15,7 @@ const maxVisualBank = MathUtils.degToRad(38);
 
 export class ArcadeFlyingCar implements VehicleModule {
   readonly object: Object3D;
-  readonly state: VehicleState;
+  readonly state: VehicleSimulationState;
 
   private readonly visual: Object3D;
   private readonly command: FlightCommand;
@@ -25,8 +25,6 @@ export class ArcadeFlyingCar implements VehicleModule {
 
   private heading = 0;
   private pitch = 0;
-  private visualRoll = 0;
-  private visualPitch = 0;
   private longitudinalAcceleration = 0;
 
   constructor(options: ArcadeFlyingCarOptions) {
@@ -34,7 +32,7 @@ export class ArcadeFlyingCar implements VehicleModule {
     this.visual = options.visual;
     this.command = options.command;
 
-    this.object.position.copy(options.startPosition ?? new Vector3(0, 520, 0));
+    const startPosition = options.startPosition ?? new Vector3(0, 520, 0);
     this.motionEuler.setFromQuaternion(this.object.quaternion, 'YXZ');
     this.heading = this.motionEuler.y;
     this.pitch = clamp(this.motionEuler.x, -maxPitch, maxPitch);
@@ -42,13 +40,16 @@ export class ArcadeFlyingCar implements VehicleModule {
     this.desiredForward.copy(this.travelDirection);
 
     this.state = {
-      position: this.object.position,
-      rotation: this.object.quaternion,
+      position: startPosition.clone(),
+      rotation: this.object.quaternion.clone(),
       velocity: this.travelDirection.clone().multiplyScalar(92),
       angularVelocity: new Vector3(),
       throttle: 0,
-      speed: 92
+      speed: 92,
+      visualRoll: 0,
+      visualPitch: 0
     };
+    this.applyRenderState(this.state);
   }
 
   update(dt: number): void {
@@ -79,7 +80,7 @@ export class ArcadeFlyingCar implements VehicleModule {
     const yawRate = 0.72 * speedAuthority;
     const pitchRate = 0.62 * speedAuthority;
     const previousPitch = this.pitch;
-    const previousVisualRoll = this.visualRoll;
+    const previousVisualRoll = this.state.visualRoll;
 
     this.heading = wrapAngle(this.heading + this.command.yaw * yawRate * dt);
     if (Math.abs(this.command.pitch) > 0.01) {
@@ -90,37 +91,47 @@ export class ArcadeFlyingCar implements VehicleModule {
     this.pitch = clamp(this.pitch, -maxPitch, maxPitch);
 
     this.motionEuler.set(this.pitch, this.heading, 0, 'YXZ');
-    this.object.quaternion.setFromEuler(this.motionEuler);
+    this.state.rotation.setFromEuler(this.motionEuler);
 
-    this.desiredForward.copy(localForward).applyQuaternion(this.object.quaternion).normalize();
+    this.desiredForward.copy(localForward).applyQuaternion(this.state.rotation).normalize();
     this.travelDirection.lerp(this.desiredForward, 1 - Math.exp(-10 * dt)).normalize();
     this.state.velocity.copy(this.travelDirection).multiplyScalar(this.state.speed);
-    this.object.position.addScaledVector(this.state.velocity, dt);
+    this.state.position.addScaledVector(this.state.velocity, dt);
 
     const automaticBank = this.command.yaw * MathUtils.degToRad(22) * speedAuthority;
     const manualBank = this.command.roll * MathUtils.degToRad(30);
     const targetVisualRoll = clamp(automaticBank + manualBank, -maxVisualBank, maxVisualBank);
-    this.visualRoll = damp(this.visualRoll, targetVisualRoll, 6.8, dt);
+    this.state.visualRoll = damp(this.state.visualRoll, targetVisualRoll, 6.8, dt);
 
     const accelerationPitch = clamp(this.longitudinalAcceleration / 100, -1, 1) *
       MathUtils.degToRad(4.5);
     const controlPitch = this.command.pitch * MathUtils.degToRad(2);
-    this.visualPitch = damp(this.visualPitch, accelerationPitch + controlPitch, 5.4, dt);
-    this.visual.rotation.set(this.visualPitch, 0, this.visualRoll, 'YXZ');
+    this.state.visualPitch = damp(
+      this.state.visualPitch,
+      accelerationPitch + controlPitch,
+      5.4,
+      dt
+    );
 
     this.state.angularVelocity.set(
       (this.pitch - previousPitch) / Math.max(dt, 0.0001),
       this.command.yaw * yawRate,
-      (this.visualRoll - previousVisualRoll) / Math.max(dt, 0.0001)
+      (this.state.visualRoll - previousVisualRoll) / Math.max(dt, 0.0001)
     );
+  }
+
+  applyRenderState(renderState: VehicleSimulationState): void {
+    this.object.position.copy(renderState.position);
+    this.object.quaternion.copy(renderState.rotation);
+    this.visual.rotation.set(renderState.visualPitch, 0, renderState.visualRoll, 'YXZ');
   }
 
   getDiagnostics() {
     return {
       heading: this.heading,
       pitch: this.pitch,
-      visualRoll: this.visualRoll,
-      visualPitch: this.visualPitch,
+      visualRoll: this.state.visualRoll,
+      visualPitch: this.state.visualPitch,
       longitudinalAcceleration: this.longitudinalAcceleration,
       desiredForward: this.desiredForward.toArray(),
       travelDirection: this.travelDirection.toArray()

@@ -1,6 +1,6 @@
 import { Vector2, WebGLRenderer } from 'three';
 
-export const coreRenderDiagnosticsVersion = 'core-drive-render-2026-08-04.1';
+export const coreRenderDiagnosticsVersion = 'core-drive-render-2026-08-04.2';
 
 export interface FramebufferPixelSample {
   name: string;

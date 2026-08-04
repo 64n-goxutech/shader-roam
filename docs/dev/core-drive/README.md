@@ -33,7 +33,7 @@
 - ⚡ `Experience` 的 Scene 子节点固定为车辆根节点、车辆填充灯和车辆主光，不再存在环境更新或 resize/dispose 链路。
 - ⚡ `ExperienceConfig` 只保留车辆 ID、模型 URL 与视觉 yaw；页面只保留一个全屏 canvas。
 - ⚡ renderer 使用纯色 `#111318` 背景、DPR `1` 和基础抗锯齿；相机初始偏移由 `(0, 2.7, 13.5)` 收近至 `(0, 2.25, 9.5)`。
-- ⚡ 帧时上限由 `1/30s` 放宽为 `0.1s`；正常长帧继续推进真实运动时间，只过滤标签恢复等异常大步长。
+- ⚡ 旧的可变帧时更新已替换为 `1/60s` 固定模拟、8 子步上限和 previous/current 渲染插值。
 - 🆕 debug API 收缩为 `snapshot()` 与 `dump()`，诊断仅包含运行时、车辆、相机、renderer、Scene 子节点和可选帧缓冲采样。
 
 ## 验证记录
@@ -45,3 +45,8 @@
 - 🆕 联合 `W + A` 输入验证中，车辆从 `(0, 520, 0)` 移动到约 `(-33, 520, -118)`，速度由 `92` 提升到 `151`，航向与视觉侧倾同步改变。
 - 🆕 `ego-browser` 隔离页默认处于 Page Visibility hidden 状态；运动验证临时模拟 visible 后执行，应用源码没有测试专用分支。
 - ⚡ 2026-08-04 相机控制器由 Three examples `OrbitControls` 迁移为 `camera-controls@3.1.2`；核心 Scene 内容和车辆控制边界不变。
+- 🆕 `planFixedStepFrame()` 精确测试：`33/50/100ms` 分别计划 `1/3/6` 个完整子步且不丢时间；`200ms` 限制为 `8` 步并丢弃约 `66.7ms`。
+- 🆕 固定 `30 FPS` 的 60 秒测试完成 `1800` render frames / `3600` simulation steps，模拟时间精确为 `60s` 且 dropped time 为 `0`。
+- 🆕 `W+A` 浏览器集成验证中 render/simulation position 保持约一个固定步的有限差值，速度、姿态、车轮和 camera-controls 同步，`glError = 0`。
+- ⚡ 修复 camera-controls 的一帧提交延迟：自动跟随改为共享插值车辆的逐帧位移，并在 `setLookAt` 后以 `update(0)` 同帧写入真实相机。
+- 🆕 混合 `0/1/2/3` 子步的直行与转向采样中，相机到车辆的距离和观察深度保持到浮点精度；桌面与移动视口复验通过。

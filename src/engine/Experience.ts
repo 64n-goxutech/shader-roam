@@ -27,14 +27,21 @@ import { ArcadeFlyingCar } from '../vehicles/ArcadeFlyingCar';
 import { createPlaceholderFlyingCar } from '../vehicles/createPlaceholderFlyingCar';
 import { loadVehicleModel } from '../vehicles/loadVehicleModel';
 import { VehicleWheelAnimator } from '../vehicles/VehicleWheelAnimator';
-import type { ExperienceConfig } from './types';
+import type { ExperienceConfig, VehicleSimulationState } from './types';
+import { planFixedStepFrame } from './fixedStep';
+import {
+  copyVehicleSimulationState,
+  createVehicleSimulationState,
+  interpolateVehicleSimulationState
+} from './vehicleState';
 
 export interface ExperienceOptions {
   canvas: HTMLCanvasElement;
   config: ExperienceConfig;
 }
 
-const maxFrameDelta = 0.1;
+const fixedStep = 1 / 60;
+const maxSubsteps = 8;
 
 export class Experience {
   private readonly canvas: HTMLCanvasElement;
@@ -48,12 +55,29 @@ export class Experience {
   private readonly vehicle: ArcadeFlyingCar;
   private readonly vehicleVisualRoot: Group;
   private readonly vehicleCameraRig: VehicleCameraRig;
+  private readonly previousVehicleState: VehicleSimulationState;
+  private readonly currentVehicleState: VehicleSimulationState;
+  private readonly renderVehicleState: VehicleSimulationState;
   private readonly removeRendererDiagnostics: () => void;
 
   private animationFrame = 0;
   private running = false;
   private frameCount = 0;
   private lastRawDelta = 0;
+  private lastAcceptedDelta = 0;
+  private accumulator = 0;
+  private interpolationAlpha = 0;
+  private simulationTime = 0;
+  private droppedTime = 0;
+  private lastSubstepCount = 0;
+  private totalSubstepCount = 0;
+  private framesWithMultipleSubsteps = 0;
+  private maxSubstepsObserved = 0;
+  private lastCatchUpFrame: {
+    rawDelta: number;
+    acceptedDelta: number;
+    substepCount: number;
+  } | null = null;
   private vehicleModelState: 'loading' | 'ready' | 'fallback' = 'loading';
   private vehicleWheels: VehicleWheelAnimator | null = null;
 
@@ -90,6 +114,9 @@ export class Experience {
       visual: vehicleVisualRoot,
       command: this.controls.command
     });
+    this.previousVehicleState = createVehicleSimulationState(this.vehicle.state);
+    this.currentVehicleState = createVehicleSimulationState(this.vehicle.state);
+    this.renderVehicleState = createVehicleSimulationState(this.vehicle.state);
     void this.loadVehicleVisual(placeholder);
 
     this.vehicleCameraRig = new VehicleCameraRig({
@@ -157,15 +184,53 @@ export class Experience {
     }
 
     this.timer.update(timestamp);
-    const rawDt = this.timer.getDelta();
-    const dt = Math.min(Math.max(rawDt, 0), maxFrameDelta);
+    const rawDt = Math.max(this.timer.getDelta(), 0);
+    const framePlan = planFixedStepFrame(
+      this.accumulator,
+      rawDt,
+      fixedStep,
+      maxSubsteps
+    );
+    const acceptedDt = framePlan.acceptedDelta;
     this.lastRawDelta = rawDt;
+    this.lastAcceptedDelta = acceptedDt;
+    this.droppedTime += framePlan.droppedDelta;
+    this.accumulator = framePlan.accumulator;
 
     const rawInput = this.input.snapshot();
-    this.controls.update(rawInput, dt);
-    this.vehicle.update(dt);
-    this.vehicleWheels?.update(dt, this.vehicle.state.speed);
-    this.vehicleCameraRig.update(dt, this.vehicle.state);
+    for (let stepIndex = 0; stepIndex < framePlan.substepCount; stepIndex += 1) {
+      copyVehicleSimulationState(this.previousVehicleState, this.currentVehicleState);
+      this.controls.update(rawInput, fixedStep);
+      this.vehicle.update(fixedStep);
+      copyVehicleSimulationState(this.currentVehicleState, this.vehicle.state);
+      this.vehicleWheels?.step(fixedStep, this.currentVehicleState.speed);
+      this.simulationTime += fixedStep;
+    }
+
+    this.lastSubstepCount = framePlan.substepCount;
+    this.totalSubstepCount += framePlan.substepCount;
+    this.maxSubstepsObserved = Math.max(
+      this.maxSubstepsObserved,
+      framePlan.substepCount
+    );
+    if (framePlan.substepCount > 1) {
+      this.framesWithMultipleSubsteps += 1;
+      this.lastCatchUpFrame = {
+        rawDelta: rawDt,
+        acceptedDelta: acceptedDt,
+        substepCount: framePlan.substepCount
+      };
+    }
+    this.interpolationAlpha = framePlan.interpolationAlpha;
+    interpolateVehicleSimulationState(
+      this.renderVehicleState,
+      this.previousVehicleState,
+      this.currentVehicleState,
+      this.interpolationAlpha
+    );
+    this.vehicle.applyRenderState(this.renderVehicleState);
+    this.vehicleWheels?.render(this.interpolationAlpha);
+    this.vehicleCameraRig.update(acceptedDt, this.renderVehicleState);
 
     this.renderer.render(this.scene, this.camera);
     this.frameCount += 1;
@@ -197,9 +262,23 @@ export class Experience {
       runtime: {
         running: this.running,
         frameCount: this.frameCount,
-        elapsed: this.timer.getElapsed(),
+        renderElapsed: this.timer.getElapsed(),
         lastFrameMilliseconds: this.lastRawDelta * 1000,
+        acceptedFrameMilliseconds: this.lastAcceptedDelta * 1000,
         approximateFps: this.lastRawDelta > 0 ? 1 / this.lastRawDelta : null
+      },
+      simulation: {
+        fixedStep,
+        maxSubsteps,
+        accumulator: this.accumulator,
+        interpolationAlpha: this.interpolationAlpha,
+        simulationTime: this.simulationTime,
+        droppedTime: this.droppedTime,
+        lastSubstepCount: this.lastSubstepCount,
+        totalSubstepCount: this.totalSubstepCount,
+        framesWithMultipleSubsteps: this.framesWithMultipleSubsteps,
+        maxSubstepsObserved: this.maxSubstepsObserved,
+        lastCatchUpFrame: this.lastCatchUpFrame
       },
       config: this.config,
       camera: {
@@ -215,8 +294,10 @@ export class Experience {
         modelUrl: this.config.vehicleModelUrl,
         modelState: this.vehicleModelState,
         visualChildren: this.vehicleVisualRoot.children.map((child) => child.name || child.type),
-        position: this.vehicle.state.position.toArray(),
-        speed: this.vehicle.state.speed,
+        position: this.renderVehicleState.position.toArray(),
+        simulationPosition: this.vehicle.state.position.toArray(),
+        speed: this.renderVehicleState.speed,
+        simulationSpeed: this.vehicle.state.speed,
         wheels: this.vehicleWheels?.getDiagnostics() ?? null,
         attitude: this.vehicle.getDiagnostics()
       },
@@ -278,7 +359,7 @@ export class Experience {
     if (!event.repeat && event.code === 'KeyR') {
       event.preventDefault();
       event.stopPropagation();
-      this.vehicleCameraRig.reset(this.vehicle.state);
+      this.vehicleCameraRig.reset(this.renderVehicleState);
     }
   };
 

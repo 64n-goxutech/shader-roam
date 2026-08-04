@@ -41,7 +41,7 @@ const initialOffset = new Vector3(0, 2.25, 9.5);
 const targetOffset = new Vector3(0, 0.35, 0);
 const baseFov = 64;
 const maxFov = 74;
-const followSharpness = 18;
+const orbitRotateSpeed = 1.6;
 const fovSharpness = 4.8;
 const headingSharpness = 7.5;
 const localForward = new Vector3(0, 0, -1);
@@ -51,11 +51,8 @@ export class VehicleCameraRig {
   readonly controls: CameraControls;
 
   private readonly camera: PerspectiveCamera;
-  private readonly target = new Vector3();
-  private readonly desiredTarget = new Vector3();
-  private readonly lookAhead = new Vector3();
-  private readonly targetDelta = new Vector3();
-  private readonly previousTarget = new Vector3();
+  private readonly previousVehiclePosition = new Vector3();
+  private readonly followDelta = new Vector3();
   private readonly controlsTarget = new Vector3();
   private readonly controlsPosition = new Vector3();
   private readonly cameraOffset = new Vector3();
@@ -70,8 +67,8 @@ export class VehicleCameraRig {
     this.controls = new CameraControls(options.camera, options.domElement);
     this.controls.smoothTime = 0.12;
     this.controls.draggingSmoothTime = 0.08;
-    this.controls.azimuthRotateSpeed = 0.58;
-    this.controls.polarRotateSpeed = 0.58;
+    this.controls.azimuthRotateSpeed = orbitRotateSpeed;
+    this.controls.polarRotateSpeed = orbitRotateSpeed;
     this.controls.dollySpeed = 0.85;
     this.controls.truckSpeed = 0.55;
     this.controls.minDistance = 4;
@@ -91,18 +88,10 @@ export class VehicleCameraRig {
     this.controls.getTarget(this.controlsTarget, false);
     this.controls.getPosition(this.controlsPosition, false);
 
-    const speedLookAhead = Math.min(10.5, vehicleState.speed / followSharpness);
-    this.lookAhead
-      .copy(vehicleState.velocity)
-      .normalize()
-      .multiplyScalar(speedLookAhead);
-    this.desiredTarget.copy(vehicleState.position).add(targetOffset).add(this.lookAhead);
-    const followAlpha = 1 - Math.exp(-followSharpness * dt);
-    this.target.lerp(this.desiredTarget, followAlpha);
-    this.targetDelta.copy(this.target).sub(this.previousTarget);
-    this.controlsTarget.add(this.targetDelta);
-    this.controlsPosition.add(this.targetDelta);
-    this.previousTarget.copy(this.target);
+    this.followDelta.copy(vehicleState.position).sub(this.previousVehiclePosition);
+    this.controlsTarget.add(this.followDelta);
+    this.controlsPosition.add(this.followDelta);
+    this.previousVehiclePosition.copy(vehicleState.position);
 
     this.targetHeading = this.readVehicleHeading(vehicleState);
     const headingDelta =
@@ -123,6 +112,7 @@ export class VehicleCameraRig {
       this.controlsTarget.z,
       false
     );
+    this.controls.update(0);
 
     const speedRatio = MathUtils.smoothstep(vehicleState.speed, 72, 260);
     this.targetFov = MathUtils.lerp(baseFov, maxFov, speedRatio);
@@ -142,14 +132,11 @@ export class VehicleCameraRig {
   }
 
   reset(vehicleState: VehicleState): void {
-    this.target.copy(vehicleState.position).add(targetOffset);
-    this.desiredTarget.copy(this.target);
-    this.lookAhead.set(0, 0, 0);
+    this.controlsTarget.copy(vehicleState.position).add(targetOffset);
     this.targetHeading = this.readVehicleHeading(vehicleState);
     this.followHeading = this.targetHeading;
     this.cameraOffset.copy(initialOffset).applyAxisAngle(worldUp, this.followHeading);
-    this.controlsPosition.copy(this.target).add(this.cameraOffset);
-    this.controlsTarget.copy(this.target);
+    this.controlsPosition.copy(this.controlsTarget).add(this.cameraOffset);
     void this.controls.setLookAt(
       this.controlsPosition.x,
       this.controlsPosition.y,
@@ -159,10 +146,12 @@ export class VehicleCameraRig {
       this.controlsTarget.z,
       false
     );
+    this.controls.update(0);
     this.camera.fov = baseFov;
     this.camera.updateProjectionMatrix();
     this.targetFov = baseFov;
-    this.previousTarget.copy(this.target);
+    this.previousVehiclePosition.copy(vehicleState.position);
+    this.followDelta.set(0, 0, 0);
   }
 
   getDiagnostics() {
@@ -172,7 +161,8 @@ export class VehicleCameraRig {
       active: this.controls.active,
       currentAction: this.controls.currentAction,
       distance: this.controls.distance,
-      lookAheadDistance: this.lookAhead.length(),
+      positionFollowMode: 'render-delta',
+      lastFollowDistance: this.followDelta.length(),
       targetFov: this.targetFov,
       currentFov: this.camera.fov,
       targetHeading: this.targetHeading,

@@ -12,7 +12,9 @@ interface WheelBinding {
   baseQuaternion: Quaternion;
   radius: number;
   spinSign: 1 | -1;
-  spinRadians: number;
+  previousSpinRadians: number;
+  currentSpinRadians: number;
+  renderedSpinRadians: number;
 }
 
 const fullTurn = Math.PI * 2;
@@ -55,27 +57,39 @@ export class VehicleWheelAnimator {
         baseQuaternion: node.quaternion.clone(),
         radius: measureWheelRadius(node),
         spinSign: nodeAxis.dot(referenceAxis) >= 0 ? 1 : -1,
-        spinRadians: 0
+        previousSpinRadians: 0,
+        currentSpinRadians: 0,
+        renderedSpinRadians: 0
       });
     }
 
     this.wheelNodes = this.bindings.map((binding) => binding.node);
   }
 
-  update(dt: number, linearSpeed: number): void {
+  step(dt: number, linearSpeed: number): void {
     if (!Number.isFinite(dt) || !Number.isFinite(linearSpeed) || dt <= 0) {
       return;
     }
 
     const travelDistance = linearSpeed * dt;
     for (const binding of this.bindings) {
-      binding.spinRadians = MathUtils.euclideanModulo(
-        binding.spinRadians + travelDistance / binding.radius,
-        fullTurn
+      binding.previousSpinRadians = binding.currentSpinRadians;
+      binding.currentSpinRadians += travelDistance / binding.radius;
+      normalizeLargeWheelAngle(binding);
+    }
+  }
+
+  render(alpha: number): void {
+    const t = MathUtils.clamp(alpha, 0, 1);
+    for (const binding of this.bindings) {
+      binding.renderedSpinRadians = MathUtils.lerp(
+        binding.previousSpinRadians,
+        binding.currentSpinRadians,
+        t
       );
       this.spinQuaternion.setFromAxisAngle(
         localSpinAxis,
-        binding.spinRadians * binding.spinSign
+        binding.renderedSpinRadians * binding.spinSign
       );
       binding.node.quaternion.copy(binding.baseQuaternion).multiply(this.spinQuaternion);
     }
@@ -91,10 +105,23 @@ export class VehicleWheelAnimator {
         name: binding.node.name,
         radius: binding.radius,
         spinSign: binding.spinSign,
-        spinRadians: binding.spinRadians
+        spinRadians: MathUtils.euclideanModulo(binding.currentSpinRadians, fullTurn),
+        renderedSpinRadians: MathUtils.euclideanModulo(binding.renderedSpinRadians, fullTurn)
       }))
     };
   }
+}
+
+function normalizeLargeWheelAngle(binding: WheelBinding): void {
+  const normalizationThreshold = fullTurn * 1024;
+  if (Math.abs(binding.currentSpinRadians) < normalizationThreshold) {
+    return;
+  }
+
+  const completedTurns = Math.trunc(binding.currentSpinRadians / fullTurn);
+  const offset = completedTurns * fullTurn;
+  binding.currentSpinRadians -= offset;
+  binding.previousSpinRadians -= offset;
 }
 
 function measureWheelRadius(node: Object3D): number {

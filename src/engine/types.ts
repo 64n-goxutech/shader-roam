@@ -15,6 +15,11 @@ export interface VehicleState {
   speed: number;
 }
 
+export interface VehicleSimulationState extends VehicleState {
+  visualRoll: number;
+  visualPitch: number;
+}
+
 export interface Updatable {
   update(dt: number, elapsed: number): void;
 }
