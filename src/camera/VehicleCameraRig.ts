@@ -1,8 +1,38 @@
-import { MathUtils, PerspectiveCamera, Vector3 } from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import CameraControls from 'camera-controls';
+import {
+  Box3,
+  MathUtils,
+  Matrix4,
+  OrthographicCamera,
+  PerspectiveCamera,
+  Quaternion,
+  Raycaster,
+  Sphere,
+  Spherical,
+  Vector2,
+  Vector3,
+  Vector4
+} from 'three';
 import type { VehicleState } from '../engine/types';
 
-export interface OrbitCameraRigOptions {
+CameraControls.install({
+  THREE: {
+    Box3,
+    MathUtils,
+    Matrix4,
+    OrthographicCamera,
+    PerspectiveCamera,
+    Quaternion,
+    Raycaster,
+    Sphere,
+    Spherical,
+    Vector2,
+    Vector3,
+    Vector4
+  }
+});
+
+export interface VehicleCameraRigOptions {
   camera: PerspectiveCamera;
   domElement: HTMLElement;
 }
@@ -17,8 +47,8 @@ const headingSharpness = 7.5;
 const localForward = new Vector3(0, 0, -1);
 const worldUp = new Vector3(0, 1, 0);
 
-export class OrbitCameraRig {
-  readonly controls: OrbitControls;
+export class VehicleCameraRig {
+  readonly controls: CameraControls;
 
   private readonly camera: PerspectiveCamera;
   private readonly target = new Vector3();
@@ -26,6 +56,8 @@ export class OrbitCameraRig {
   private readonly lookAhead = new Vector3();
   private readonly targetDelta = new Vector3();
   private readonly previousTarget = new Vector3();
+  private readonly controlsTarget = new Vector3();
+  private readonly controlsPosition = new Vector3();
   private readonly cameraOffset = new Vector3();
   private readonly vehicleForward = new Vector3();
   private targetFov = baseFov;
@@ -33,17 +65,20 @@ export class OrbitCameraRig {
   private followHeading = 0;
   private initialized = false;
 
-  constructor(options: OrbitCameraRigOptions) {
+  constructor(options: VehicleCameraRigOptions) {
     this.camera = options.camera;
-    this.controls = new OrbitControls(options.camera, options.domElement);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
-    this.controls.rotateSpeed = 0.58;
-    this.controls.zoomSpeed = 0.85;
-    this.controls.panSpeed = 0.55;
+    this.controls = new CameraControls(options.camera, options.domElement);
+    this.controls.smoothTime = 0.12;
+    this.controls.draggingSmoothTime = 0.08;
+    this.controls.azimuthRotateSpeed = 0.58;
+    this.controls.polarRotateSpeed = 0.58;
+    this.controls.dollySpeed = 0.85;
+    this.controls.truckSpeed = 0.55;
     this.controls.minDistance = 4;
     this.controls.maxDistance = 46;
-    this.controls.screenSpacePanning = true;
+    this.controls.mouseButtons.left = CameraControls.ACTION.ROTATE;
+    this.controls.mouseButtons.right = CameraControls.ACTION.SCREEN_PAN;
+    this.controls.mouseButtons.wheel = CameraControls.ACTION.DOLLY;
   }
 
   update(dt: number, vehicleState: VehicleState): void {
@@ -51,6 +86,10 @@ export class OrbitCameraRig {
       this.reset(vehicleState);
       this.initialized = true;
     }
+
+    this.controls.update(dt);
+    this.controls.getTarget(this.controlsTarget, false);
+    this.controls.getPosition(this.controlsPosition, false);
 
     const speedLookAhead = Math.min(10.5, vehicleState.speed / followSharpness);
     this.lookAhead
@@ -61,8 +100,8 @@ export class OrbitCameraRig {
     const followAlpha = 1 - Math.exp(-followSharpness * dt);
     this.target.lerp(this.desiredTarget, followAlpha);
     this.targetDelta.copy(this.target).sub(this.previousTarget);
-    this.controls.target.add(this.targetDelta);
-    this.camera.position.add(this.targetDelta);
+    this.controlsTarget.add(this.targetDelta);
+    this.controlsPosition.add(this.targetDelta);
     this.previousTarget.copy(this.target);
 
     this.targetHeading = this.readVehicleHeading(vehicleState);
@@ -71,10 +110,19 @@ export class OrbitCameraRig {
       (1 - Math.exp(-headingSharpness * dt));
     this.followHeading = wrapAngle(this.followHeading + headingDelta);
     this.cameraOffset
-      .copy(this.camera.position)
-      .sub(this.controls.target)
+      .copy(this.controlsPosition)
+      .sub(this.controlsTarget)
       .applyAxisAngle(worldUp, headingDelta);
-    this.camera.position.copy(this.controls.target).add(this.cameraOffset);
+    this.controlsPosition.copy(this.controlsTarget).add(this.cameraOffset);
+    void this.controls.setLookAt(
+      this.controlsPosition.x,
+      this.controlsPosition.y,
+      this.controlsPosition.z,
+      this.controlsTarget.x,
+      this.controlsTarget.y,
+      this.controlsTarget.z,
+      false
+    );
 
     const speedRatio = MathUtils.smoothstep(vehicleState.speed, 72, 260);
     this.targetFov = MathUtils.lerp(baseFov, maxFov, speedRatio);
@@ -87,8 +135,6 @@ export class OrbitCameraRig {
       this.camera.fov = nextFov;
       this.camera.updateProjectionMatrix();
     }
-
-    this.controls.update();
   }
 
   dispose(): void {
@@ -102,18 +148,30 @@ export class OrbitCameraRig {
     this.targetHeading = this.readVehicleHeading(vehicleState);
     this.followHeading = this.targetHeading;
     this.cameraOffset.copy(initialOffset).applyAxisAngle(worldUp, this.followHeading);
-    this.camera.position.copy(this.target).add(this.cameraOffset);
+    this.controlsPosition.copy(this.target).add(this.cameraOffset);
+    this.controlsTarget.copy(this.target);
+    void this.controls.setLookAt(
+      this.controlsPosition.x,
+      this.controlsPosition.y,
+      this.controlsPosition.z,
+      this.controlsTarget.x,
+      this.controlsTarget.y,
+      this.controlsTarget.z,
+      false
+    );
     this.camera.fov = baseFov;
     this.camera.updateProjectionMatrix();
     this.targetFov = baseFov;
-    this.controls.target.copy(this.target);
     this.previousTarget.copy(this.target);
-    this.controls.update();
   }
 
   getDiagnostics() {
     return {
+      controller: 'camera-controls',
       initialized: this.initialized,
+      active: this.controls.active,
+      currentAction: this.controls.currentAction,
+      distance: this.controls.distance,
       lookAheadDistance: this.lookAhead.length(),
       targetFov: this.targetFov,
       currentFov: this.camera.fov,

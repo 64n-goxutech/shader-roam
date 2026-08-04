@@ -14,7 +14,7 @@ import {
   Vector3,
   WebGLRenderer
 } from 'three';
-import { OrbitCameraRig } from '../camera/OrbitCameraRig';
+import { VehicleCameraRig } from '../camera/VehicleCameraRig';
 import { ControlSystem } from '../controls/ControlSystem';
 import { KeyboardPointerInput } from '../controls/KeyboardPointerInput';
 import {
@@ -47,7 +47,7 @@ export class Experience {
   private readonly controls = new ControlSystem();
   private readonly vehicle: ArcadeFlyingCar;
   private readonly vehicleVisualRoot: Group;
-  private readonly orbitCameraRig: OrbitCameraRig;
+  private readonly vehicleCameraRig: VehicleCameraRig;
   private readonly removeRendererDiagnostics: () => void;
 
   private animationFrame = 0;
@@ -92,7 +92,7 @@ export class Experience {
     });
     void this.loadVehicleVisual(placeholder);
 
-    this.orbitCameraRig = new OrbitCameraRig({
+    this.vehicleCameraRig = new VehicleCameraRig({
       camera: this.camera,
       domElement: this.canvas
     });
@@ -132,7 +132,7 @@ export class Experience {
     this.running = false;
     window.cancelAnimationFrame(this.animationFrame);
     this.input.dispose();
-    this.orbitCameraRig.dispose();
+    this.vehicleCameraRig.dispose();
     this.timer.dispose();
     this.removeRendererDiagnostics();
     window.removeEventListener('resize', this.resize);
@@ -165,7 +165,7 @@ export class Experience {
     this.controls.update(rawInput, dt);
     this.vehicle.update(dt);
     this.vehicleWheels?.update(dt, this.vehicle.state.speed);
-    this.orbitCameraRig.update(dt, this.vehicle.state);
+    this.vehicleCameraRig.update(dt, this.vehicle.state);
 
     this.renderer.render(this.scene, this.camera);
     this.frameCount += 1;
@@ -208,7 +208,7 @@ export class Experience {
         aspect: this.camera.aspect,
         near: this.camera.near,
         far: this.camera.far,
-        motionFeedback: this.orbitCameraRig.getDiagnostics()
+        motionFeedback: this.vehicleCameraRig.getDiagnostics()
       },
       vehicle: {
         id: this.config.vehicleId,
@@ -278,7 +278,7 @@ export class Experience {
     if (!event.repeat && event.code === 'KeyR') {
       event.preventDefault();
       event.stopPropagation();
-      this.orbitCameraRig.reset(this.vehicle.state);
+      this.vehicleCameraRig.reset(this.vehicle.state);
     }
   };
 

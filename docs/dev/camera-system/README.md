@@ -20,10 +20,14 @@
 
 ## 本次落地内容
 
+- ⚡ 2026-08-04 已安装 `camera-controls@3.1.2`，删除 `OrbitControls` import，并将 `OrbitCameraRig` 收敛为 `VehicleCameraRig`。
+- 🆕 迁移必须保留现有拖拽 orbit、滚轮缩放、右键平移、速度 FOV、前视、航向跟随和 `R` 重置行为。
+- 🆕 自动跟随只通过 camera-controls 的公开 position / target API同步，主循环仍负责每帧传入 `dt`。
+
 - ⚡ 删除旧跟随相机和所有相机模式切换逻辑。
 - ⚡ 删除页面相机模式按钮；核心驾驶收缩后 HUD 也已完全移除。
-- ⚡ `Experience` 固定使用 `OrbitCameraRig`。
-- ⚡ `KeyboardPointerInput` 固定禁用鼠标飞控输入，鼠标只交给 `OrbitControls`。
+- ⚡ `Experience` 固定使用 `VehicleCameraRig`。
+- ⚡ `KeyboardPointerInput` 固定禁用鼠标飞控输入，鼠标只交给 camera-controls。
 - ⚡ `R` 保留为 orbit 相机重置快捷键。
 - ⚡ 落日主题将 target offset 从 `0.8` 降到 `0.35`，initial offset 从 `(0, 4, 12)` 调整为 `(0, 2.7, 13.5)`。
 - 🆕 自动跟随目标加入最多 `10.5` 单位的速度方向前视，以 `18` 的 sharpness 做帧率无关阻尼。
@@ -35,7 +39,8 @@
 ## 修复记录
 
 - ⚡ 修复模式切换和按钮长期干扰问题：彻底移除模式切换，避免 UI 状态、快捷键和相机 rig 之间的状态不同步。
-- ⚡ 修复飞车移动时 orbit 视角被拉回尾部的问题：OrbitControls target 与相机使用相同的平滑自动位移，并只按航向旋转当前相对偏移，保留用户 orbit 构图。
+- ⚡ camera-controls 每帧先消费用户输入，再由 rig 读取当前 position/target，并对两者应用相同的载具跟随位移和航向旋转。
+- 🆕 首轮迁移遗漏 position 同步，车辆前进时观察距离从 `9.76` 漂移到 `92`；已修复为 position/target 同量平移。
 - 🆕 新构图下太阳的首屏归一化位置约为 `(0.664, 0.828)`，同时 AE86 仍位于相机中心区域。
 - 🆕 数值模拟验证巡航 10 秒后自动目标与车身目标误差约 `0.73` 单位；高速 5 秒后 FOV 为 `73.99°`，重置后回到 `64°`。
 - 🆕 连续 `90°` 转向时相机保留约 `3.75°` 航向滞后，停转 1 秒后误差收敛到约 `0.002°`，观察半径误差小于浮点精度。
@@ -46,9 +51,19 @@
 ## 验证项
 
 - `npm run build` 通过。
+- 源码和构建依赖中不再出现 Three examples `OrbitControls`。
+- camera-controls 实例只创建一次并在 `Experience.stop()` 中释放。
 - 页面不再显示相机模式按钮。
 - 鼠标可以自由旋转、缩放和平移视角。
 - 键盘仍可控制飞车。
 - `R` 可以重置 orbit 相机。
 - 加速和减速期间自动目标与 FOV 平滑变化，不产生非有限数值。
 - 转向期间相机保持用户选定的相对 orbit 构图，停止转向后平滑收敛到当前航向。
+
+## camera-controls 验证记录
+
+- 🆕 `npm run build` 通过，源码中不再存在 `OrbitControls` / `OrbitCameraRig` 引用。
+- 🆕 车辆前进约 `86` 单位后 camera-controls 距离保持 `9.7628`，漂移为 `0`。
+- 🆕 鼠标 orbit 改变相机位置但距离只产生浮点误差；滚轮将距离从 `9.76` 调整到 `5.98`。
+- 🆕 `R` 重置后距离精确恢复 `9.7628`；模型状态 `ready`、`glError = 0`，无浏览器异常事件。
+- 🆕 入口包由约 `644.50 kB` 增至 `671.51 kB`，新增约 `27 kB` 为 camera-controls 运行时代码。

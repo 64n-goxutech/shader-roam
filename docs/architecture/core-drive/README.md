@@ -11,7 +11,7 @@ graph TB
     Asset[AE86 GLB] --> Loader[Vehicle Loader]
     Loader --> Visual[Vehicle Visual Root]
     State --> Wheels[VehicleWheelAnimator]
-    State --> Camera[OrbitCameraRig]
+    State --> Camera[⚡ VehicleCameraRig + camera-controls]
     Visual --> Renderer[WebGLRenderer]
     Camera --> Renderer
     Lights[⚡ Minimal Vehicle Lights] --> Renderer
@@ -23,7 +23,7 @@ graph TB
 |------|------|------|------|
 | `Experience` | ⚡ 只组装车辆、控制、相机、基础灯光和渲染循环 | Canvas、车辆配置 | 核心驾驶运行时 |
 | `ArcadeFlyingCar` | 计算速度、航向、俯仰与车身姿态 | `FlightCommand`、帧时 | `VehicleState` |
-| `OrbitCameraRig` | 跟随车辆并保留 orbit 观察 | `VehicleState`、鼠标输入 | Camera transform |
+| `VehicleCameraRig` | ⚡ 通过 camera-controls 跟随车辆并保留 orbit 观察 | `VehicleState`、鼠标输入 | Camera transform |
 | `VehicleWheelAnimator` | 按车辆线速度驱动车轮 | 车辆速度、帧时 | 车轮局部姿态 |
 | `loadVehicleModel` | 加载、缩放和居中 AE86 | 模型 URL | 车辆视觉节点 |
 

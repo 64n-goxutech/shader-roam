@@ -44,3 +44,4 @@
 - 🆕 AE86 模型状态为 `ready`，四个车轮节点全部绑定且旋转角同步更新。
 - 🆕 联合 `W + A` 输入验证中，车辆从 `(0, 520, 0)` 移动到约 `(-33, 520, -118)`，速度由 `92` 提升到 `151`，航向与视觉侧倾同步改变。
 - 🆕 `ego-browser` 隔离页默认处于 Page Visibility hidden 状态；运动验证临时模拟 visible 后执行，应用源码没有测试专用分支。
+- ⚡ 2026-08-04 相机控制器由 Three examples `OrbitControls` 迁移为 `camera-controls@3.1.2`；核心 Scene 内容和车辆控制边界不变。
